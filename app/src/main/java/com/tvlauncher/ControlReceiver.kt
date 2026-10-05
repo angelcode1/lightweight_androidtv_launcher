@@ -27,11 +27,7 @@ class ControlReceiver : BroadcastReceiver() {
                 } catch (_: Exception) {
                     false
                 }
-                finishSync(
-                    context,
-                    requestId,
-                    replyPackage,
-                    ACTION_HOME,
+                setOrderedResult(
                     success,
                     if (success) "home_started" else "home_start_failed"
                 )
@@ -52,69 +48,46 @@ class ControlReceiver : BroadcastReceiver() {
                             packageName.ifEmpty { component.packageName }
                         )
                     }
-                } else if (packageName.isNotEmpty()) {
-                    repository.launchPackage(packageName)
                 } else {
-                    false
+                    repository.launchPackage(packageName)
                 }
 
-                finishSync(
-                    context,
-                    requestId,
-                    replyPackage,
-                    ACTION_LAUNCH,
+                setOrderedResult(
                     success,
                     if (success) "launch_started" else "launch_failed"
                 )
             }
 
             ACTION_WALLPAPER_REFRESH -> {
-                val pending = goAsync()
-                NatureWallpaperManager.refreshAsync(
-                    context.applicationContext,
-                    force = true
-                ) { success ->
-                    if (success) notifyWallpaperChanged(context)
-                    sendReply(
-                        context,
-                        requestId,
-                        replyPackage,
-                        ACTION_WALLPAPER_REFRESH,
-                        success,
-                        if (success) "wallpaper_refreshed" else "wallpaper_refresh_failed"
-                    )
-                    pending.finish()
-                }
+                handleWallpaperJob(
+                    context = context,
+                    command = ACTION_WALLPAPER_REFRESH,
+                    requestId = requestId,
+                    replyPackage = replyPackage
+                )
             }
 
             ACTION_WALLPAPER_SET_SOURCE -> {
                 val source = intent.getStringExtra(EXTRA_SOURCE).orEmpty()
-                val validSource =
-                    source == NatureWallpaperManager.SOURCE_SOLID ||
-                        source == NatureWallpaperManager.SOURCE_BING ||
-                        source == NatureWallpaperManager.SOURCE_NATURE ||
-                        source == NatureWallpaperManager.SOURCE_CUSTOM
-
-                if (!validSource) {
-                    finishSync(
+                if (!isValidSource(source)) {
+                    rejectWallpaperCommand(
                         context,
                         requestId,
                         replyPackage,
                         ACTION_WALLPAPER_SET_SOURCE,
-                        false,
                         "invalid_wallpaper_source"
                     )
                     return
                 }
 
-                NatureWallpaperManager.setSource(context, source)
-                intent.getStringExtra(EXTRA_CUSTOM_URL)?.let {
-                    NatureWallpaperManager.setCustomUrl(context, it)
-                }
-
+                val customUrl = intent.getStringExtra(EXTRA_CUSTOM_URL)
                 if (source == NatureWallpaperManager.SOURCE_SOLID) {
-                    notifyWallpaperChanged(context)
-                    finishSync(
+                    NatureWallpaperManager.setSource(context, source)
+                    context.sendBroadcast(
+                        Intent(ACTION_WALLPAPER_CHANGED).setPackage(context.packageName)
+                    )
+                    setOrderedResult(true, "completed")
+                    sendFinalResult(
                         context,
                         requestId,
                         replyPackage,
@@ -125,53 +98,92 @@ class ControlReceiver : BroadcastReceiver() {
                     return
                 }
 
-                val pending = goAsync()
-                NatureWallpaperManager.refreshAsync(
-                    context.applicationContext,
-                    force = true
-                ) { success ->
-                    if (success) notifyWallpaperChanged(context)
-                    sendReply(
-                        context,
-                        requestId,
-                        replyPackage,
-                        ACTION_WALLPAPER_SET_SOURCE,
-                        success,
-                        if (success) "wallpaper_source_set" else "wallpaper_source_fetch_failed"
-                    )
-                    pending.finish()
-                }
+                handleWallpaperJob(
+                    context = context,
+                    command = ACTION_WALLPAPER_SET_SOURCE,
+                    requestId = requestId,
+                    replyPackage = replyPackage,
+                    source = source,
+                    customUrl = customUrl
+                )
             }
 
-            else -> {
-                finishSync(
+            else -> setOrderedResult(false, "unsupported_action")
+        }
+    }
+
+    private fun handleWallpaperJob(
+        context: Context,
+        command: String,
+        requestId: String,
+        replyPackage: String,
+        source: String? = null,
+        customUrl: String? = null
+    ) {
+        when (
+            WallpaperRefreshJobService.schedule(
+                context = context,
+                command = command,
+                requestId = requestId,
+                replyPackage = replyPackage,
+                source = source,
+                customUrl = customUrl
+            )
+        ) {
+            WallpaperRefreshJobService.Companion.ScheduleResult.ACCEPTED ->
+                setOrderedResult(true, "accepted")
+
+            WallpaperRefreshJobService.Companion.ScheduleResult.BUSY -> {
+                setOrderedResult(false, "already_in_progress")
+                sendFinalResult(
                     context,
                     requestId,
                     replyPackage,
-                    intent.action.orEmpty(),
+                    command,
                     false,
-                    "unsupported_action"
+                    "already_in_progress"
+                )
+            }
+
+            WallpaperRefreshJobService.Companion.ScheduleResult.FAILED -> {
+                setOrderedResult(false, "schedule_failed")
+                sendFinalResult(
+                    context,
+                    requestId,
+                    replyPackage,
+                    command,
+                    false,
+                    "schedule_failed"
                 )
             }
         }
     }
 
-    private fun finishSync(
+    private fun rejectWallpaperCommand(
         context: Context,
         requestId: String,
         replyPackage: String,
         command: String,
-        success: Boolean,
         message: String
     ) {
-        if (isOrderedBroadcast) {
-            resultCode = if (success) Activity.RESULT_OK else Activity.RESULT_CANCELED
-            resultData = message
-        }
-        sendReply(context, requestId, replyPackage, command, success, message)
+        setOrderedResult(false, message)
+        sendFinalResult(
+            context,
+            requestId,
+            replyPackage,
+            command,
+            false,
+            message
+        )
     }
 
-    private fun sendReply(
+    private fun setOrderedResult(success: Boolean, message: String) {
+        if (!isOrderedBroadcast) return
+        resultCode = if (success) Activity.RESULT_OK else Activity.RESULT_CANCELED
+        resultData = message
+    }
+
+    private fun sendFinalResult(
         context: Context,
         requestId: String,
         replyPackage: String,
@@ -191,10 +203,11 @@ class ControlReceiver : BroadcastReceiver() {
         context.sendBroadcast(reply, CONTROL_PERMISSION)
     }
 
-    private fun notifyWallpaperChanged(context: Context) {
-        context.sendBroadcast(
-            Intent(ACTION_WALLPAPER_CHANGED).setPackage(context.packageName)
-        )
+    private fun isValidSource(source: String): Boolean {
+        return source == NatureWallpaperManager.SOURCE_SOLID ||
+            source == NatureWallpaperManager.SOURCE_BING ||
+            source == NatureWallpaperManager.SOURCE_NATURE ||
+            source == NatureWallpaperManager.SOURCE_CUSTOM
     }
 
     companion object {

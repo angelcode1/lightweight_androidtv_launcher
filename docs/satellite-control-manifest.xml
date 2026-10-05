@@ -1,0 +1,10 @@
+<!-- Gazelle Satellite manifest contract for Fire OS 7 / Android 9.
+     The launcher and satellite MUST use the same permanent signing certificate.
+     Declaring the same signature permission in both same-signed apps avoids
+     custom-permission install-order problems on this legacy target. -->
+<permission
+    android:name="com.gazelle.launcher.permission.CONTROL"
+    android:protectionLevel="signature" />
+
+<uses-permission
+    android:name="com.gazelle.launcher.permission.CONTROL" />

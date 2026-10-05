@@ -25,10 +25,21 @@ jobs:
       - name: Install Android SDK components
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Assert removed runtime stacks stay removed
+      - name: Assert tests exist
+        run: test -n "$(find app/src/test -type f -name '*Test.kt' -print -quit)"
+
+      - name: Assert removed stacks stay removed
         run: |
-          if grep -R -n -E "AppCompat|RecyclerView|ConstraintLayout|androidx\.work" app/src app/build.gradle; then
-            echo "Removed runtime dependency referenced again."
+          if grep -RniE "appcompat|recyclerview|constraintlayout|androidx\.work" app/src app/build.gradle; then
+            echo "Removed runtime stack referenced again."
+            exit 1
+          fi
+
+      - name: Inspect runtime dependency graph
+        run: |
+          ./gradlew :app:dependencies --configuration debugRuntimeClasspath --no-daemon > runtime-deps.txt
+          if grep -iE "androidx\.appcompat|androidx\.recyclerview|androidx\.constraintlayout|androidx\.work" runtime-deps.txt; then
+            cat runtime-deps.txt
             exit 1
           fi
 

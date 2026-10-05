@@ -37,7 +37,10 @@ class MainActivity : Activity() {
 
     private val wallpaperChangedReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            if (intent?.action == ControlReceiver.ACTION_WALLPAPER_CHANGED) {
+            if (
+                intent?.action == ControlReceiver.ACTION_WALLPAPER_CHANGED &&
+                isHomeVisible
+            ) {
                 applyWallpaperFromCache()
             }
         }
@@ -50,35 +53,46 @@ class MainActivity : Activity() {
         registerWallpaperReceiver()
     }
 
+    override fun onStart() {
+        super.onStart()
+        registerWallpaperReceiver()
+    }
+
     override fun onResume() {
         super.onResume()
+        isHomeVisible = true
         populateGrid()
         applyWallpaperFromCache()
         refreshWallpaperIfNeeded(force = false)
     }
 
+    override fun onPause() {
+        isHomeVisible = false
+        releaseWallpaperBitmap()
+        super.onPause()
+    }
+
     override fun onStop() {
-        // Release icon and wallpaper bitmaps while another app is in the foreground.
-        appGrid.removeAllViews()
-        wallpaperImage.setImageDrawable(null)
-        wallpaperImage.visibility = View.GONE
-        wallpaperDim.visibility = View.GONE
-        repository.clearIconCache()
+        unregisterWallpaperReceiver()
         super.onStop()
     }
 
     override fun onDestroy() {
-        try {
-            unregisterReceiver(wallpaperChangedReceiver)
-        } catch (_: Exception) {
-        }
+        unregisterWallpaperReceiver()
+        repository.clearIconCache()
         super.onDestroy()
     }
 
     override fun onTrimMemory(level: Int) {
-        repository.clearIconCache()
         if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
-            wallpaperImage.setImageDrawable(null)
+            releaseWallpaperBitmap()
+        }
+        if (
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+            level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+            level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND
+        ) {
+            repository.clearIconCache()
         }
         super.onTrimMemory(level)
     }
@@ -92,6 +106,7 @@ class MainActivity : Activity() {
     }
 
     private fun registerWallpaperReceiver() {
+        if (wallpaperReceiverRegistered) return
         val filter = IntentFilter(ControlReceiver.ACTION_WALLPAPER_CHANGED)
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(
@@ -103,6 +118,23 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION")
             registerReceiver(wallpaperChangedReceiver, filter)
         }
+        wallpaperReceiverRegistered = true
+    }
+
+    private fun unregisterWallpaperReceiver() {
+        if (!wallpaperReceiverRegistered) return
+        try {
+            unregisterReceiver(wallpaperChangedReceiver)
+        } catch (_: Exception) {
+        } finally {
+            wallpaperReceiverRegistered = false
+        }
+    }
+
+    private fun releaseWallpaperBitmap() {
+        wallpaperImage.setImageDrawable(null)
+        wallpaperImage.visibility = View.GONE
+        wallpaperDim.visibility = View.GONE
     }
 
     private fun buildUi(): View {
@@ -358,7 +390,7 @@ class MainActivity : Activity() {
     }
 
     private fun showAppMenu(entry: AppEntry, position: Int) {
-        val selectedCount = repository.getSelectedIds().size
+        val visibleEntries = repository.getSelectedEntries()
         val labels = mutableListOf<String>()
         val actions = mutableListOf<() -> Unit>()
 
@@ -366,21 +398,27 @@ class MainActivity : Activity() {
         actions.add { repository.launch(entry) }
 
         if (position > 0) {
-            labels.add(getString(R.string.app_menu_move_left))
-            actions.add {
-                if (repository.moveSelected(position, position - 1)) {
-                    lastFocusedPosition = position - 1
-                    populateGrid()
+            val leftId = visibleEntries.getOrNull(position - 1)?.id
+            if (leftId != null) {
+                labels.add(getString(R.string.app_menu_move_left))
+                actions.add {
+                    if (repository.swapSelected(entry.id, leftId)) {
+                        lastFocusedPosition = position - 1
+                        populateGrid()
+                    }
                 }
             }
         }
 
-        if (position < selectedCount - 1) {
-            labels.add(getString(R.string.app_menu_move_right))
-            actions.add {
-                if (repository.moveSelected(position, position + 1)) {
-                    lastFocusedPosition = position + 1
-                    populateGrid()
+        if (position < visibleEntries.size - 1) {
+            val rightId = visibleEntries.getOrNull(position + 1)?.id
+            if (rightId != null) {
+                labels.add(getString(R.string.app_menu_move_right))
+                actions.add {
+                    if (repository.swapSelected(entry.id, rightId)) {
+                        lastFocusedPosition = position + 1
+                        populateGrid()
+                    }
                 }
             }
         }
@@ -461,9 +499,11 @@ class MainActivity : Activity() {
         var sourceIndex = sourceKeys.indexOf(
             NatureWallpaperManager.getSource(this)
         ).coerceAtLeast(0)
-        var intervalIndex = intervalValues.indexOf(
-            NatureWallpaperManager.getInterval(this)
-        ).coerceAtLeast(1)
+        var intervalIndex = GazelleLogic.intervalIndex(
+            intervalValues,
+            NatureWallpaperManager.getInterval(this),
+            defaultIndex = 1
+        )
 
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -556,21 +596,27 @@ class MainActivity : Activity() {
         NatureWallpaperManager.refreshAsync(
             applicationContext,
             force
-        ) { success ->
-            if (isFinishing) return@refreshAsync
-            if (success) {
-                applyWallpaperFromCache()
-            } else if (force) {
-                Toast.makeText(
-                    this,
-                    R.string.wallpaper_refresh_failed,
-                    Toast.LENGTH_SHORT
-                ).show()
+        ) { result ->
+            if (!isHomeVisible || isFinishing) return@refreshAsync
+            when (result) {
+                NatureWallpaperManager.RefreshResult.SUCCESS ->
+                    applyWallpaperFromCache()
+                NatureWallpaperManager.RefreshResult.BUSY -> Unit
+                NatureWallpaperManager.RefreshResult.FAILED -> {
+                    if (force) {
+                        Toast.makeText(
+                            this,
+                            R.string.wallpaper_refresh_failed,
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
             }
         }
     }
 
     private fun applyWallpaperFromCache() {
+        if (!isHomeVisible) return
         if (NatureWallpaperManager.getSource(this) == NatureWallpaperManager.SOURCE_SOLID) {
             wallpaperImage.setImageDrawable(null)
             wallpaperImage.visibility = View.GONE

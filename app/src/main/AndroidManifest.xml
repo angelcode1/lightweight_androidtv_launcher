@@ -1,10 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Used only when a changing online wallpaper source is selected. -->
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- Local IPC for the Gazelle HA satellite. Both apps should use the same signing key. -->
     <permission
         android:name="com.gazelle.launcher.permission.CONTROL"
         android:protectionLevel="signature" />
@@ -68,6 +66,11 @@
                 <action android:name="com.gazelle.launcher.action.WALLPAPER_SET_SOURCE" />
             </intent-filter>
         </receiver>
+
+        <service
+            android:name=".WallpaperRefreshJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
     </application>
 

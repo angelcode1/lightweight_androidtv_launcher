@@ -11,7 +11,6 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
-import java.util.Collections
 import java.util.LinkedHashMap
 import java.util.LinkedHashSet
 import java.util.Locale
@@ -106,37 +105,45 @@ class AppRepository(private val context: Context) {
     }
 
     fun getSelectedEntries(): List<AppEntry> {
-        val ids = getSelectedIds()
-        if (ids.isEmpty()) return emptyList()
+        val savedIds = getSelectedIds()
+        if (savedIds.isEmpty()) return emptyList()
 
-        val repairedIds = mutableListOf<String>()
         val result = mutableListOf<AppEntry>()
+        val replacements = mutableMapOf<String, String?>()
         var launchableApps: List<AppEntry>? = null
 
-        ids.forEach { id ->
-            val component = ComponentName.unflattenFromString(id) ?: return@forEach
-            val current = resolveActivity(component)
-
-            if (current != null) {
-                result.add(current)
-                repairedIds.add(current.id)
+        savedIds.forEach { savedId ->
+            val component = ComponentName.unflattenFromString(savedId)
+            if (component == null) {
+                replacements[savedId] = null
                 return@forEach
             }
 
-            // App updates sometimes rename launcher aliases/activities. Preserve the
-            // tile by resolving the package's current preferred launcher component.
+            val current = resolveActivity(component)
+            if (current != null) {
+                result.add(current)
+                replacements[savedId] = current.id
+                return@forEach
+            }
+
             val apps = launchableApps ?: queryLaunchableApps().also {
                 launchableApps = it
             }
             val fallback = preferredEntryForPackage(component.packageName, apps)
-                ?: return@forEach
 
-            result.add(fallback)
-            repairedIds.add(fallback.id)
+            if (fallback != null) {
+                result.add(fallback)
+                replacements[savedId] = fallback.id
+            } else {
+                // App may only be temporarily disabled/unavailable. Preserve its
+                // stored tile id so re-enabling the package restores it.
+                replacements[savedId] = null
+            }
         }
 
-        if (repairedIds != ids) {
-            saveSelectedIds(repairedIds)
+        val reconciled = GazelleLogic.reconcileStoredIds(savedIds, replacements)
+        if (reconciled != savedIds) {
+            saveSelectedIds(reconciled)
         }
         return result
     }
@@ -154,7 +161,7 @@ class AppRepository(private val context: Context) {
 
     private fun preferredEntryForPackage(
         packageName: String,
-        apps: List<AppEntry> = queryLaunchableApps()
+        apps: List<AppEntry>
     ): AppEntry? {
         return apps.asSequence()
             .filter { it.packageName == packageName }
@@ -178,12 +185,15 @@ class AppRepository(private val context: Context) {
         )
     }
 
-    fun moveSelected(from: Int, to: Int): Boolean {
+    fun swapSelected(firstId: String, secondId: String): Boolean {
         val current = getSelectedIds().toMutableList()
-        if (from !in current.indices || to !in current.indices || from == to) {
-            return false
-        }
-        Collections.swap(current, from, to)
+        val first = current.indexOf(firstId)
+        val second = current.indexOf(secondId)
+        if (first < 0 || second < 0 || first == second) return false
+
+        val tmp = current[first]
+        current[first] = current[second]
+        current[second] = tmp
         saveSelectedIds(current)
         return true
     }
@@ -218,16 +228,14 @@ class AppRepository(private val context: Context) {
     }
 
     fun launchPackage(packageName: String): Boolean {
-        val match = preferredEntryForPackage(packageName)
-        if (match != null && launchComponentExact(match.component)) {
-            return true
-        }
+        if (packageName.isBlank()) return false
 
         return try {
-            val fallback = packageManager.getLaunchIntentForPackage(packageName)
+            val intent = packageManager.getLeanbackLaunchIntentForPackage(packageName)
+                ?: packageManager.getLaunchIntentForPackage(packageName)
                 ?: return false
-            fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(fallback)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(intent)
             true
         } catch (_: Exception) {
             false

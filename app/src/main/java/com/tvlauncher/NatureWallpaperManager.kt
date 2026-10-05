@@ -7,12 +7,14 @@ import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.min
 
 object NatureWallpaperManager {
     const val SOURCE_SOLID = "solid"
@@ -37,9 +39,18 @@ object NatureWallpaperManager {
     private const val MAX_DOWNLOAD_BYTES = 12L * 1024L * 1024L
     private const val MAX_TEXT_BYTES = 1024L * 1024L
     private const val MAX_REDIRECTS = 5
+    private const val MAX_REFRESH_DURATION_MS = 20_000L
+    private const val MAX_CONNECT_TIMEOUT_MS = 5_000
+    private const val MAX_READ_TIMEOUT_MS = 8_000
 
     private val refreshing = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
+
+    enum class RefreshResult {
+        SUCCESS,
+        FAILED,
+        BUSY
+    }
 
     fun getSource(context: Context): String {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -120,57 +131,63 @@ object NatureWallpaperManager {
     fun refreshAsync(
         context: Context,
         force: Boolean,
-        onComplete: (Boolean) -> Unit = {}
+        onComplete: (RefreshResult) -> Unit = {}
     ) {
         if (getSource(context) == SOURCE_SOLID) {
-            mainHandler.post { onComplete(true) }
+            mainHandler.post { onComplete(RefreshResult.SUCCESS) }
             return
         }
 
         if (!force && !shouldRefresh(context)) {
-            mainHandler.post { onComplete(true) }
+            mainHandler.post { onComplete(RefreshResult.SUCCESS) }
             return
         }
 
         if (!refreshing.compareAndSet(false, true)) {
-            mainHandler.post { onComplete(false) }
+            mainHandler.post { onComplete(RefreshResult.BUSY) }
             return
         }
 
         Thread {
-            var success = false
+            var result = RefreshResult.FAILED
+            val deadline = SystemClock.elapsedRealtime() + MAX_REFRESH_DURATION_MS
             try {
                 val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val previousUrl = prefs.getString(PREF_LAST_REMOTE_URL, "").orEmpty()
                 val remoteUrl = when (getSource(context)) {
-                    SOURCE_BING -> fetchBingImageUrl(previousUrl)
-                    SOURCE_NATURE -> fetchNatureImageUrl(previousUrl)
+                    SOURCE_BING -> fetchBingImageUrl(previousUrl, deadline)
+                    SOURCE_NATURE -> fetchNatureImageUrl(previousUrl, deadline)
                     SOURCE_CUSTOM -> getCustomUrl(context).takeIf { isHttpsUrl(it) }
                     else -> null
                 }
 
-                if (!remoteUrl.isNullOrBlank()) {
-                    success = downloadImage(context, remoteUrl)
-                    if (success) {
+                if (!remoteUrl.isNullOrBlank() && !deadlineExpired(deadline)) {
+                    if (downloadImage(context, remoteUrl, deadline)) {
                         prefs.edit()
                             .putLong(PREF_LAST_FETCH, System.currentTimeMillis())
                             .putString(PREF_LAST_REMOTE_URL, remoteUrl)
                             .apply()
+                        result = RefreshResult.SUCCESS
                     }
                 }
             } catch (_: Exception) {
-                success = false
+                result = RefreshResult.FAILED
+            } catch (_: OutOfMemoryError) {
+                result = RefreshResult.FAILED
             } finally {
                 refreshing.set(false)
-                mainHandler.post { onComplete(success) }
+                mainHandler.post { onComplete(result) }
             }
+        }.apply {
+            name = "gazelle-wallpaper-refresh"
+            isDaemon = true
         }.start()
     }
 
-    private fun fetchBingImageUrl(previousUrl: String): String? {
+    private fun fetchBingImageUrl(previousUrl: String, deadline: Long): String? {
         val endpoint =
             "https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=en-AU"
-        val body = fetchText(endpoint) ?: return null
+        val body = fetchText(endpoint, deadline) ?: return null
         val images = JSONObject(body).optJSONArray("images") ?: return null
 
         val urls = mutableListOf<String>()
@@ -190,10 +207,10 @@ object NatureWallpaperManager {
         return urls.firstOrNull { it != previousUrl } ?: urls.first()
     }
 
-    private fun fetchNatureImageUrl(previousUrl: String): String? {
+    private fun fetchNatureImageUrl(previousUrl: String, deadline: Long): String? {
         val endpoint =
             "https://wallhaven.cc/api/v1/search?q=nature&categories=100&purity=100&sorting=random&ratios=16x9"
-        val body = fetchText(endpoint) ?: return null
+        val body = fetchText(endpoint, deadline) ?: return null
         val data = JSONObject(body).optJSONArray("data") ?: return null
 
         val urls = mutableListOf<String>()
@@ -206,48 +223,80 @@ object NatureWallpaperManager {
         return urls.firstOrNull { it != previousUrl } ?: urls.first()
     }
 
-    private fun fetchText(urlString: String): String? {
-        if (!isHttpsUrl(urlString)) return null
-
-        var connection: HttpURLConnection? = null
-        return try {
-            connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 8000
-                readTimeout = 8000
-                instanceFollowRedirects = true
-                setRequestProperty("User-Agent", "GazelleLauncher/1.0")
-                setRequestProperty("Accept", "application/json,text/plain,*/*")
-            }
-
-            if (connection.responseCode !in 200..299) return null
-            val contentLength = connection.contentLengthLong
-            if (contentLength > MAX_TEXT_BYTES) return null
-
-            connection.inputStream.bufferedReader().use { reader ->
-                val builder = StringBuilder()
-                val buffer = CharArray(4096)
-                var total = 0L
-                while (true) {
-                    val count = reader.read(buffer)
-                    if (count <= 0) break
-                    total += count
-                    if (total > MAX_TEXT_BYTES) return null
-                    builder.append(buffer, 0, count)
-                }
-                builder.toString()
-            }
-        } catch (_: Exception) {
-            null
-        } finally {
-            connection?.disconnect()
-        }
-    }
-
-    private fun downloadImage(context: Context, initialUrl: String): Boolean {
+    private fun fetchText(initialUrl: String, deadline: Long): String? {
         var currentUrl = initialUrl
         var redirects = 0
 
-        while (redirects <= MAX_REDIRECTS) {
+        while (redirects <= MAX_REDIRECTS && !deadlineExpired(deadline)) {
+            if (!isHttpsUrl(currentUrl)) return null
+
+            val url = try {
+                URL(currentUrl)
+            } catch (_: Exception) {
+                return null
+            }
+
+            var connection: HttpURLConnection? = null
+            try {
+                connection = (url.openConnection() as HttpURLConnection).apply {
+                    connectTimeout = timeoutFor(deadline, MAX_CONNECT_TIMEOUT_MS)
+                    readTimeout = timeoutFor(deadline, MAX_READ_TIMEOUT_MS)
+                    instanceFollowRedirects = false
+                    setRequestProperty("User-Agent", "GazelleLauncher/1.0 (Android TV)")
+                    setRequestProperty("Accept", "application/json,text/plain,*/*")
+                }
+
+                when (val status = connection.responseCode) {
+                    HttpURLConnection.HTTP_MOVED_PERM,
+                    HttpURLConnection.HTTP_MOVED_TEMP,
+                    HttpURLConnection.HTTP_SEE_OTHER,
+                    307,
+                    308 -> {
+                        val location = connection.getHeaderField("Location") ?: return null
+                        currentUrl = URL(url, location).toString()
+                        redirects++
+                        continue
+                    }
+                    in 200..299 -> Unit
+                    else -> return null
+                }
+
+                val contentLength = connection.contentLengthLong
+                if (contentLength > MAX_TEXT_BYTES) return null
+
+                connection.inputStream.bufferedReader().use { reader ->
+                    val builder = StringBuilder()
+                    val buffer = CharArray(4096)
+                    var total = 0L
+                    while (!deadlineExpired(deadline)) {
+                        val count = reader.read(buffer)
+                        if (count <= 0) {
+                            return builder.toString()
+                        }
+                        total += count
+                        if (total > MAX_TEXT_BYTES) return null
+                        builder.append(buffer, 0, count)
+                    }
+                }
+                return null
+            } catch (_: Exception) {
+                return null
+            } finally {
+                connection?.disconnect()
+            }
+        }
+        return null
+    }
+
+    private fun downloadImage(
+        context: Context,
+        initialUrl: String,
+        deadline: Long
+    ): Boolean {
+        var currentUrl = initialUrl
+        var redirects = 0
+
+        while (redirects <= MAX_REDIRECTS && !deadlineExpired(deadline)) {
             if (!isHttpsUrl(currentUrl)) return false
 
             val url = try {
@@ -259,10 +308,10 @@ object NatureWallpaperManager {
             var connection: HttpURLConnection? = null
             try {
                 connection = (url.openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 10000
-                    readTimeout = 15000
+                    connectTimeout = timeoutFor(deadline, MAX_CONNECT_TIMEOUT_MS)
+                    readTimeout = timeoutFor(deadline, MAX_READ_TIMEOUT_MS)
                     instanceFollowRedirects = false
-                    setRequestProperty("User-Agent", "GazelleLauncher/1.0")
+                    setRequestProperty("User-Agent", "GazelleLauncher/1.0 (Android TV)")
                     setRequestProperty("Accept", "image/*")
                 }
 
@@ -292,7 +341,7 @@ object NatureWallpaperManager {
                 connection.inputStream.use { input ->
                     FileOutputStream(temp).use { output ->
                         val buffer = ByteArray(8192)
-                        while (true) {
+                        while (!deadlineExpired(deadline)) {
                             val count = input.read(buffer)
                             if (count <= 0) break
                             total += count
@@ -304,6 +353,11 @@ object NatureWallpaperManager {
                         }
                         output.flush()
                     }
+                }
+
+                if (deadlineExpired(deadline)) {
+                    temp.delete()
+                    return false
                 }
 
                 if (total < 1024L || !isValidImage(temp)) {
@@ -332,11 +386,17 @@ object NatureWallpaperManager {
     }
 
     private fun isValidImage(file: File): Boolean {
-        val options = BitmapFactory.Options().apply {
-            inJustDecodeBounds = true
+        return try {
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeFile(file.absolutePath, options)
+            GazelleLogic.isSafeImageDimensions(options.outWidth, options.outHeight)
+        } catch (_: Exception) {
+            false
+        } catch (_: OutOfMemoryError) {
+            false
         }
-        BitmapFactory.decodeFile(file.absolutePath, options)
-        return options.outWidth > 0 && options.outHeight > 0
     }
 
     private fun decodeForDisplay(
@@ -349,18 +409,18 @@ object NatureWallpaperManager {
                 inJustDecodeBounds = true
             }
             BitmapFactory.decodeFile(file.absolutePath, bounds)
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+            if (!GazelleLogic.isSafeImageDimensions(bounds.outWidth, bounds.outHeight)) {
+                return null
+            }
 
             val reqWidth = targetWidth.coerceIn(640, 1920)
             val reqHeight = targetHeight.coerceIn(360, 1080)
-
-            var sample = 1
-            while (
-                bounds.outWidth / (sample * 2) >= reqWidth &&
-                bounds.outHeight / (sample * 2) >= reqHeight
-            ) {
-                sample *= 2
-            }
+            val sample = GazelleLogic.calculateSampleSize(
+                bounds.outWidth,
+                bounds.outHeight,
+                reqWidth,
+                reqHeight
+            )
 
             val options = BitmapFactory.Options().apply {
                 inSampleSize = sample
@@ -369,7 +429,21 @@ object NatureWallpaperManager {
             BitmapFactory.decodeFile(file.absolutePath, options)
         } catch (_: Exception) {
             null
+        } catch (_: OutOfMemoryError) {
+            null
         }
+    }
+
+    private fun timeoutFor(deadline: Long, maximumMs: Int): Int {
+        val remaining = deadline - SystemClock.elapsedRealtime()
+        if (remaining <= 0L) return 1
+        return min(remaining, maximumMs.toLong())
+            .coerceAtLeast(1L)
+            .toInt()
+    }
+
+    private fun deadlineExpired(deadline: Long): Boolean {
+        return SystemClock.elapsedRealtime() >= deadline
     }
 
     private fun cacheFile(context: Context): File {
