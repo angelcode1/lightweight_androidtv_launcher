@@ -11,7 +11,7 @@ Fire TV Cube 3 (AFTGAZL / gazelle) optimized branch.
 - Replaced RecyclerView/ConstraintLayout/AppCompat with Android framework UI.
 - Shows both Android TV and normal phone/tablet launcher activities.
 - Stores explicit component names, with direct package fallback if an app update renames the activity.
-- Uses a responsive 6 x 3 Home grid: up to 17 apps plus the Add tile.
+- Uses a framework-only horizontal HOME carousel: up to 17 pinned apps plus Add, with about 7 visible at once.
 - Keeps the small icon cache warm across ordinary app launches while releasing the large wallpaper bitmap when HOME stops.
 - Retains the existing HOME view hierarchy across app launches; package reconciliation/icon loading and wallpaper decode run off the UI thread on resume.
 - Keeps changing wallpapers without a resident process; HA-triggered wallpaper work is handed to a short-lived JobService.
@@ -20,14 +20,20 @@ Fire TV Cube 3 (AFTGAZL / gazelle) optimized branch.
 
     ./gradlew clean test lint assembleDebug assembleRelease
 
-CI assembles both debug and unsigned release APKs so AAPT/lint plus release R8/shrinkResources are exercised. Release builds are unsigned unless all four signing variables are provided:
+CI on `main` and pull requests runs tests, lint, debug assembly, and unsigned release assembly so AAPT/R8/shrinkResources are exercised without publishing a release.
+
+`.github/workflows/release.yml` is a manual unsigned verification build only. It never creates or mutates a GitHub release/tag.
+
+`.github/workflows/signed-release.yml` is the only publication workflow. It is main-only, requires the permanent signing secrets, refuses to reuse an existing tag, and publishes a signed APK plus certificate/checksum metadata.
+
+Release signing uses:
 
     SIGNING_STORE_FILE
     SIGNING_STORE_PASSWORD
     SIGNING_KEY_ALIAS
     SIGNING_KEY_PASSWORD
 
-Create and use the permanent Gazelle signing key before the first device install if launcher configuration must survive upgrades.
+Every published release must bump both versionName and versionCode. Existing release tags/assets are treated as immutable.
 
 ## Wallpaper design
 
@@ -190,7 +196,7 @@ At commit af4fb8e, all Kotlin source files compiled against android-34.jar using
 
 Subsequent fixes changed sampling, pinned-app repair, wallpaper source-race handling, HOME lifecycle behavior, added the Amazon Collection provider/caption UI, and moved HOME app/icon plus wallpaper decode work off the main thread. Those changes require the same compile/test pass again before the branch should be treated as build-verified.
 
-The CI workflow now runs `assembleRelease` as an unsigned release build specifically to exercise R8 and `shrinkResources`. There is still no automated signed-release publication workflow.
+The CI workflow runs `assembleRelease` as an unsigned verification build to exercise R8 and `shrinkResources`. A separate manual `signed-release.yml` workflow publishes the permanently signed APK from `main` only.
 
 Cube debloat compatibility notes are in `docs/cube3-debloat-policy.md`; the stock screensaver/local-gallery packages are intentionally kept separate from Gazelle's HOME wallpaper provider.
 
@@ -206,26 +212,42 @@ Current pure tests cover:
 
 `MainActivity` no longer calls `getSelectedEntries()`, `loadIcon()`, rounded-icon rendering, or wallpaper `BitmapFactory.decodeFile()` synchronously from `onResume()`.
 
-On return from an app, the existing grid remains in the view hierarchy for the first frame. A background load then reconciles pinned apps and prepares icon drawables; a separate background load decodes the cached wallpaper. Generation counters prevent stale background results from applying after HOME stops or a newer refresh supersedes them.
+On return from an app, the existing horizontal carousel remains in the view hierarchy for the first frame. A background load then reconciles pinned apps and prepares icon drawables; a separate background load decodes the cached wallpaper. Generation counters prevent stale background results from applying after HOME stops or a newer refresh supersedes them.
 
 The wallpaper bitmap is still released in `onStop()` to retain the intended RAM saving, so device benchmarking should measure both PSS/USS and HOME time-to-first-frame / time-to-wallpaper after returning from Kodi.
 
 BACK is swallowed only when `MainActivity` was invoked with the HOME category; a normal launcher/activity invocation can use BACK normally.
 
-HA wallpaper jobs are scheduled for immediate execution without a contradictory network constraint + immediate deadline pair. Network success/failure is handled by the launcher's bounded HTTP timeouts.
+HA wallpaper jobs use `setOverrideDeadline(0L)` because Android 9 / API 28 requires at least one JobInfo constraint/deadline. `schedule()` catches scheduler/build failures and returns `ScheduleResult.FAILED` rather than allowing a broadcast-receiver crash. Network success/failure is handled by the launcher's bounded HTTP timeouts.
 
 
 ## HOME visual hierarchy
 
-The gazelle.7 HOME pass keeps the framework-only 6 x 3 grid but reduces permanent chrome:
+Current HOME is a framework-only horizontal carousel using `HorizontalScrollView + LinearLayout`; it does not add RecyclerView/AndroidX weight.
 
+- about 7 app tiles are visible at once, with up to 17 pinned apps plus Add;
 - idle app tiles use a near-transparent dark surface with no visible outline;
-- focus adds the brighter surface, soft outline, slight scale and elevation;
-- icons are capped at 54dp instead of 68dp;
+- focus adds the brighter surface, soft outline, 1.08 scale and elevation;
+- icons are capped at 52dp;
 - labels use 13sp with a subtle shadow for wallpaper legibility;
-- tile height is capped at 116dp with 14dp total gutters;
-- wallpaper/settings header controls are 42dp, muted when idle and emphasized on focus;
-- Add app is intentionally lower-emphasis until focused;
-- a subtle left-to-right wallpaper scrim improves text readability without replacing the user's optional dim control.
+- tiles are 108dp high;
+- wallpaper/settings header controls are 40dp with TV-safe top/right margins and restrained 1.03 focus scale;
+- Add is intentionally lower-emphasis until focused;
+- a subtle wallpaper scrim improves readability without replacing the optional dim control.
 
-This is a visual-only refinement; it does not add runtime libraries or resident services.
+The carousel view hierarchy stays alive across app launches; icon reconciliation and wallpaper decode happen off the main thread.
+
+
+## API 28 wallpaper IPC regression guard
+
+Fire OS 7 on the Cube 3 is API 28. `JobInfo.Builder.build()` must not be called with a completely unconstrained job on this platform. The wallpaper job therefore keeps an immediate override deadline:
+
+    .setOverrideDeadline(0L)
+
+and wraps job construction/scheduling defensively. On-device regression test:
+
+    su -c am broadcast \
+      -a com.gazelle.launcher.action.WALLPAPER_REFRESH \
+      -n com.gazelle.launcher/com.tvlauncher.ControlReceiver
+
+The expected behavior is an accepted/failed result without killing the launcher process.
