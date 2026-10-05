@@ -5,7 +5,6 @@
     <string name="search_hint">Search apps or packages…</string>
     <string name="done">Done</string>
     <string name="settings">System settings</string>
-    <string name="settings_all">All Fire TV settings</string>
     <string name="settings_network">Network</string>
     <string name="settings_display_sounds">Display &amp; Sounds</string>
     <string name="settings_applications">Applications</string>
@@ -13,7 +12,7 @@
     <string name="settings_preferences">Preferences</string>
     <string name="settings_device">My Fire TV / Device</string>
     <string name="settings_accessibility">Accessibility</string>
-    <string name="settings_open_failed">Could not open system settings.</string>
+    <string name="settings_open_failed">Could not open this Fire TV settings page.</string>
     <string name="add_app">Add app</string>
     <string name="slot_limit_reached">Home screen is full (max %1$d apps).</string>
     <string name="remove">Remove</string>
