@@ -19,6 +19,7 @@
     <string name="wallpaper_source">Source</string>
     <string name="wallpaper_source_solid">Solid dark</string>
     <string name="wallpaper_source_bing">Bing daily collection</string>
+    <string name="wallpaper_source_amazon">Amazon Fire TV Collection</string>
     <string name="wallpaper_source_nature">Nature (Wallhaven)</string>
     <string name="wallpaper_source_custom">Custom HTTPS image</string>
     <string name="wallpaper_interval">Change interval</string>
@@ -28,8 +29,9 @@
     <string name="wallpaper_interval_24h">Daily</string>
     <string name="wallpaper_custom_url_hint">Direct HTTPS image URL</string>
     <string name="wallpaper_dim">Dim wallpaper for readability</string>
+    <string name="wallpaper_caption">Show photo caption briefly</string>
     <string name="wallpaper_refresh_now">Refresh now</string>
     <string name="wallpaper_refreshing">Fetching wallpaper…</string>
     <string name="wallpaper_refresh_failed">Could not fetch a wallpaper.</string>
-    <string name="wallpaper_note">No background service is used. A refresh is checked only when the launcher is visible.</string>
+    <string name="wallpaper_note">Foreground refreshes run only when needed. HA-triggered refreshes use a short-lived job.</string>
 </resources>
