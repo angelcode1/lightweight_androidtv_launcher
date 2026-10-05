@@ -286,11 +286,12 @@ class MainActivity : Activity() {
     private fun createAppTile(entry: AppEntry, position: Int): View {
         val tile = baseTile()
 
+        val iconSizePx = calculateIconSizePx()
         val icon = ImageView(this).apply {
-            setImageDrawable(repository.loadRoundedIcon(entry, dp(68)))
+            setImageDrawable(repository.loadRoundedIcon(entry, iconSizePx))
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
-        tile.addView(icon, LinearLayout.LayoutParams(dp(68), dp(68)))
+        tile.addView(icon, LinearLayout.LayoutParams(iconSizePx, iconSizePx))
 
         val label = TextView(this).apply {
             text = entry.label
@@ -379,14 +380,23 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun tileLayoutParams(): GridLayout.LayoutParams {
+    private fun calculateTileWidthPx(): Int {
         val usableWidth = resources.displayMetrics.widthPixels - dp(68)
-        val tileWidth = (usableWidth / COLUMNS) - dp(12)
+        return ((usableWidth / COLUMNS) - dp(12)).coerceAtLeast(1)
+    }
+
+    private fun calculateIconSizePx(): Int {
+        val contentWidth = calculateTileWidthPx() - dp(16)
+        return minOf(dp(68), contentWidth.coerceAtLeast(dp(36)))
+    }
+
+    private fun tileLayoutParams(): GridLayout.LayoutParams {
+        val tileWidth = calculateTileWidthPx()
         val usableHeight = resources.displayMetrics.heightPixels - dp(128)
         val tileHeight = (usableHeight / ROWS) - dp(12)
 
         return GridLayout.LayoutParams().apply {
-            width = tileWidth.coerceAtLeast(1)
+            width = tileWidth
             height = tileHeight.coerceAtLeast(1).coerceAtMost(dp(180))
             setMargins(dp(6), dp(6), dp(6), dp(6))
         }
