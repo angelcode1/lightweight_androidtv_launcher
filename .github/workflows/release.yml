@@ -1,26 +1,13 @@
-name: Cut Gazelle prerelease
+name: Build unsigned Gazelle verification APK
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/release.yml'
-      - 'app/**'
-      - 'build.gradle'
-      - 'settings.gradle'
-      - 'gradle/**'
-      - 'gradle.properties'
 
 permissions:
-  contents: write
-
-concurrency:
-  group: gazelle-release
-  cancel-in-progress: true
+  contents: read
 
 jobs:
-  release:
+  verify-release:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -53,67 +40,23 @@ jobs:
           test -n "$VERSION_CODE"
           echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
           echo "code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION_NAME" >> "$GITHUB_OUTPUT"
 
-      - name: Run unit tests
-        run: ./gradlew test --no-daemon
+      - name: Run tests, lint, and release build
+        run: ./gradlew test lint assembleRelease --no-daemon
 
-      - name: Run lint
-        run: ./gradlew lint --no-daemon
-
-      - name: Build debug and release APKs
-        run: ./gradlew assembleDebug assembleRelease --no-daemon
-
-      - name: Stage release assets
+      - name: Stage unsigned verification APK
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
           VERSION="${{ steps.version.outputs.name }}"
-          cp app/build/outputs/apk/debug/app-debug.apk \
-            "dist/gazelle-launcher-${VERSION}-debug.apk"
           cp app/build/outputs/apk/release/app-release-unsigned.apk \
             "dist/gazelle-launcher-${VERSION}-release-unsigned.apk"
-          (
-            cd dist
-            sha256sum *.apk > SHA256SUMS.txt
-          )
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
 
-      - name: Upload workflow artifacts
+      - name: Upload unsigned verification artifact
         uses: actions/upload-artifact@v4
         with:
-          name: gazelle-launcher-${{ steps.version.outputs.name }}
+          name: gazelle-launcher-${{ steps.version.outputs.name }}-unsigned-${{ github.sha }}
           path: dist/*
           if-no-files-found: error
-
-      - name: Create GitHub prerelease
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.name }}
-          VERSION_CODE: ${{ steps.version.outputs.code }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; uploading/replacing assets."
-            gh release upload "$TAG" dist/* --clobber
-          else
-            cat > release-notes.md <<EOF
-          Fire TV Cube 3 (AFTGAZL) Gazelle Launcher prerelease.
-
-          Version code: $VERSION_CODE
-
-          Assets:
-          - debug APK: installable test build, signed with the standard CI debug key
-          - release-unsigned APK: R8/shrinkResources build, not installable until signed with the permanent Gazelle key
-          - SHA256SUMS.txt
-
-          Full Android/AAPT/lint/R8 and on-device validation should be treated as release gates before promoting this prerelease.
-          EOF
-            gh release create "$TAG" dist/* \
-              --target "$GITHUB_SHA" \
-              --title "Gazelle Launcher $VERSION" \
-              --prerelease \
-              --notes-file release-notes.md
-          fi
