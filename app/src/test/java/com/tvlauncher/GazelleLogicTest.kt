@@ -14,18 +14,26 @@ class GazelleLogicTest {
     }
 
     @Test
-    fun sampleSizeUsesDominantDimension() {
+    fun centreCropSamplingNeverForcesUpscaling() {
         assertEquals(
             2,
             GazelleLogic.calculateSampleSize(3840, 2160, 1920, 1080)
         )
         assertEquals(
-            5,
-            GazelleLogic.calculateSampleSize(1920, 5000, 1920, 1080)
+            1,
+            GazelleLogic.calculateSampleSize(2560, 1440, 1920, 1080)
         )
         assertEquals(
             1,
-            GazelleLogic.calculateSampleSize(1280, 720, 1920, 1080)
+            GazelleLogic.calculateSampleSize(1920, 1200, 1920, 1080)
+        )
+    }
+
+    @Test
+    fun sampleSizeIsAlwaysPowerOfTwo() {
+        assertEquals(
+            4,
+            GazelleLogic.calculateSampleSize(8000, 5000, 1920, 1080)
         )
     }
 
@@ -37,24 +45,14 @@ class GazelleLogicTest {
     }
 
     @Test
-    fun unresolvedSelectionIsPreserved() {
-        val saved = listOf("disabled/.Main", "kodi/.Main")
+    fun disabledSelectionIsPreservedButUninstalledSelectionIsDropped() {
+        val saved = listOf("disabled/.Main", "gone/.Main", "kodi/.Old")
         val replacements = mapOf<String, String?>(
             "disabled/.Main" to null,
-            "kodi/.Main" to "kodi/.Main"
-        )
-        assertEquals(saved, GazelleLogic.reconcileStoredIds(saved, replacements))
-    }
-
-    @Test
-    fun renamedSelectionIsRepairedWithoutDroppingOthers() {
-        val saved = listOf("app/.OldActivity", "disabled/.Main")
-        val replacements = mapOf<String, String?>(
-            "app/.OldActivity" to "app/.NewActivity",
-            "disabled/.Main" to null
+            "kodi/.Old" to "kodi/.Main"
         )
         assertEquals(
-            listOf("app/.NewActivity", "disabled/.Main"),
+            listOf("disabled/.Main", "kodi/.Main"),
             GazelleLogic.reconcileStoredIds(saved, replacements)
         )
     }
