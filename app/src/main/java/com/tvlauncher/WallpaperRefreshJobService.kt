@@ -42,6 +42,7 @@ class WallpaperRefreshJobService : JobService() {
                         "wallpaper_refreshed"
                     }
                 NatureWallpaperManager.RefreshResult.BUSY -> "already_in_progress"
+                NatureWallpaperManager.RefreshResult.STALE -> "superseded"
                 NatureWallpaperManager.RefreshResult.FAILED ->
                     if (command == ControlReceiver.ACTION_WALLPAPER_SET_SOURCE) {
                         "wallpaper_source_fetch_failed"
