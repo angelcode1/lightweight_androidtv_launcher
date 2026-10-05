@@ -8,17 +8,21 @@ import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import org.json.JSONArray
 import org.json.JSONObject
+import org.json.JSONTokener
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.HashSet
+import java.util.Random
 import kotlin.math.min
 
 object NatureWallpaperManager {
     const val SOURCE_SOLID = "solid"
     const val SOURCE_BING = "bing"
+    const val SOURCE_AMAZON = "amazon"
     const val SOURCE_NATURE = "nature"
     const val SOURCE_CUSTOM = "custom"
 
@@ -32,22 +36,33 @@ object NatureWallpaperManager {
     private const val PREF_INTERVAL = "interval"
     private const val PREF_CUSTOM_URL = "custom_url"
     private const val PREF_DIM = "dim"
+    private const val PREF_SHOW_CAPTION = "show_caption"
     private const val PREF_LAST_FETCH = "last_fetch"
     private const val PREF_LAST_REMOTE_URL = "last_remote_url"
+    private const val PREF_LAST_CAPTION = "last_caption"
     private const val PREF_CACHE_KEY = "cache_key"
 
     private const val CACHE_FILE_NAME = "gazelle-wallpaper.img"
     private const val CACHE_BACKUP_NAME = "gazelle-wallpaper.bak"
+    private const val AMAZON_MANIFEST_CACHE = "amazon-collection-en-AU-v3.json"
+
+    private const val AMAZON_CDN_BASE = "https://d21m0ezw6fosyw.cloudfront.net/"
+    private const val AMAZON_CDN_HOST = "d21m0ezw6fosyw.cloudfront.net"
+    private const val AMAZON_MANIFEST_URL =
+        "https://d21m0ezw6fosyw.cloudfront.net/manifest/collections_en_AU_v3.json"
+
     private const val MAX_DOWNLOAD_BYTES = 12L * 1024L * 1024L
     private const val MAX_TEXT_BYTES = 1024L * 1024L
     private const val MAX_REDIRECTS = 5
     private const val MAX_REFRESH_DURATION_MS = 20_000L
     private const val MAX_CONNECT_TIMEOUT_MS = 5_000
     private const val MAX_READ_TIMEOUT_MS = 8_000
+    private const val MAX_JSON_DEPTH = 8
 
     private val stateLock = Any()
     private val activeRefreshKeys = HashSet<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val random = Random()
 
     enum class RefreshResult {
         SUCCESS,
@@ -63,6 +78,11 @@ object NatureWallpaperManager {
         val key: String
             get() = if (source == SOURCE_CUSTOM) "$source\n$customUrl" else source
     }
+
+    private data class WallpaperCandidate(
+        val url: String,
+        val caption: String = ""
+    )
 
     fun getSource(context: Context): String = synchronized(stateLock) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -119,6 +139,27 @@ object NatureWallpaperManager {
             .edit()
             .putBoolean(PREF_DIM, enabled)
             .apply()
+    }
+
+    fun isCaptionEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(PREF_SHOW_CAPTION, true)
+    }
+
+    fun setCaptionEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(PREF_SHOW_CAPTION, enabled)
+            .apply()
+    }
+
+    fun getCachedCaption(context: Context): String {
+        val config = snapshotConfig(context)
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getString(PREF_CACHE_KEY, "").orEmpty() != config.key) {
+            return ""
+        }
+        return prefs.getString(PREF_LAST_CAPTION, "").orEmpty()
     }
 
     fun shouldRefresh(context: Context): Boolean {
@@ -183,21 +224,28 @@ object NatureWallpaperManager {
             try {
                 val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val previousUrl = prefs.getString(PREF_LAST_REMOTE_URL, "").orEmpty()
-                val remoteUrl = when (config.source) {
-                    SOURCE_BING -> fetchBingImageUrl(previousUrl, deadline)
-                    SOURCE_NATURE -> fetchNatureImageUrl(previousUrl, deadline)
-                    SOURCE_CUSTOM -> config.customUrl.takeIf { isHttpsUrl(it) }
+                val candidate = when (config.source) {
+                    SOURCE_BING ->
+                        fetchBingImageUrl(previousUrl, deadline)?.let { WallpaperCandidate(it) }
+                    SOURCE_AMAZON ->
+                        fetchAmazonCandidate(context, previousUrl, deadline)
+                    SOURCE_NATURE ->
+                        fetchNatureImageUrl(previousUrl, deadline)?.let { WallpaperCandidate(it) }
+                    SOURCE_CUSTOM ->
+                        config.customUrl
+                            .takeIf { isHttpsUrl(it) }
+                            ?.let { WallpaperCandidate(it) }
                     else -> null
                 }
 
-                if (!remoteUrl.isNullOrBlank() && !deadlineExpired(deadline)) {
-                    val temp = downloadImageToTemp(context, remoteUrl, deadline)
+                if (candidate != null && !deadlineExpired(deadline)) {
+                    val temp = downloadImageToTemp(context, candidate.url, deadline)
                     if (temp != null) {
                         result = commitDownloadedImage(
                             context = context,
                             temp = temp,
                             config = config,
-                            remoteUrl = remoteUrl
+                            candidate = candidate
                         )
                     }
                 }
@@ -229,7 +277,7 @@ object NatureWallpaperManager {
         context: Context,
         temp: File,
         config: RefreshConfig,
-        remoteUrl: String
+        candidate: WallpaperCandidate
     ): RefreshResult = synchronized(stateLock) {
         val current = snapshotConfig(context)
         if (current != config) {
@@ -258,7 +306,8 @@ object NatureWallpaperManager {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .edit()
             .putLong(PREF_LAST_FETCH, System.currentTimeMillis())
-            .putString(PREF_LAST_REMOTE_URL, remoteUrl)
+            .putString(PREF_LAST_REMOTE_URL, candidate.url)
+            .putString(PREF_LAST_CAPTION, candidate.caption)
             .putString(PREF_CACHE_KEY, config.key)
             .apply()
 
@@ -286,6 +335,165 @@ object NatureWallpaperManager {
 
         if (urls.isEmpty()) return null
         return urls.firstOrNull { it != previousUrl } ?: urls.first()
+    }
+
+    private fun fetchAmazonCandidate(
+        context: Context,
+        previousUrl: String,
+        deadline: Long
+    ): WallpaperCandidate? {
+        val manifest = fetchAmazonManifest(context, deadline) ?: return null
+        val root = try {
+            JSONTokener(manifest).nextValue()
+        } catch (_: Exception) {
+            return null
+        }
+
+        val candidates = mutableListOf<WallpaperCandidate>()
+        collectAmazonCandidates(root, candidates, 0)
+
+        val unique = LinkedHashMap<String, WallpaperCandidate>()
+        candidates.forEach { candidate ->
+            unique[candidate.url] = candidate
+        }
+
+        val pool = unique.values
+            .filter { it.url != previousUrl }
+            .ifEmpty { unique.values.toList() }
+
+        if (pool.isEmpty()) return null
+        return pool[random.nextInt(pool.size)]
+    }
+
+    private fun fetchAmazonManifest(context: Context, deadline: Long): String? {
+        val cache = File(context.cacheDir, AMAZON_MANIFEST_CACHE)
+        val fresh = fetchText(AMAZON_MANIFEST_URL, deadline)
+
+        if (!fresh.isNullOrBlank()) {
+            try {
+                cache.writeText(fresh)
+            } catch (_: Exception) {
+            }
+            return fresh
+        }
+
+        return try {
+            if (cache.exists() && cache.length() in 1..MAX_TEXT_BYTES) {
+                cache.readText()
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun collectAmazonCandidates(
+        node: Any?,
+        output: MutableList<WallpaperCandidate>,
+        depth: Int
+    ) {
+        if (node == null || depth > MAX_JSON_DEPTH) return
+
+        when (node) {
+            is JSONObject -> {
+                amazonCandidateFromObject(node)?.let(output::add)
+                val keys = node.keys()
+                while (keys.hasNext()) {
+                    collectAmazonCandidates(node.opt(keys.next()), output, depth + 1)
+                }
+            }
+            is JSONArray -> {
+                for (i in 0 until node.length()) {
+                    collectAmazonCandidates(node.opt(i), output, depth + 1)
+                }
+            }
+        }
+    }
+
+    private fun amazonCandidateFromObject(obj: JSONObject): WallpaperCandidate? {
+        val directPath = firstString(
+            obj,
+            arrayOf(
+                "compressed",
+                "compressedPath",
+                "compressed_path",
+                "compressedImage",
+                "compressed_image",
+                "imagePath",
+                "image_path",
+                "path",
+                "url"
+            )
+        )
+
+        val fallbackPath = firstDirectJpegString(obj)
+            ?: firstString(
+                obj,
+                arrayOf("filename", "fileName", "file_name")
+            )
+
+        val rawPath = directPath
+            ?.takeIf { isJpegPath(it) }
+            ?: fallbackPath?.takeIf { isJpegPath(it) }
+            ?: return null
+
+        val url = resolveAmazonUrl(rawPath) ?: return null
+        val caption = firstString(
+            obj,
+            arrayOf("caption", "title", "description")
+        ).orEmpty().trim()
+
+        return WallpaperCandidate(url = url, caption = caption)
+    }
+
+    private fun firstDirectJpegString(obj: JSONObject): String? {
+        val keys = obj.keys()
+        while (keys.hasNext()) {
+            val value = obj.opt(keys.next())
+            if (value is String && isJpegPath(value)) {
+                return value
+            }
+        }
+        return null
+    }
+
+    private fun firstString(obj: JSONObject, keys: Array<String>): String? {
+        keys.forEach { key ->
+            val value = obj.optString(key, "").trim()
+            if (value.isNotEmpty()) return value
+        }
+        return null
+    }
+
+    private fun resolveAmazonUrl(raw: String): String? {
+        val resolved = try {
+            if (raw.startsWith("https://", ignoreCase = true)) {
+                raw
+            } else {
+                URL(URL(AMAZON_CDN_BASE), raw.removePrefix("/")).toString()
+            }
+        } catch (_: Exception) {
+            return null
+        }
+
+        return if (isAllowedAmazonImageUrl(resolved)) resolved else null
+    }
+
+    private fun isAllowedAmazonImageUrl(value: String): Boolean {
+        return try {
+            val url = URL(value)
+            url.protocol.equals("https", ignoreCase = true) &&
+                url.host.equals(AMAZON_CDN_HOST, ignoreCase = true) &&
+                isJpegPath(url.path)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun isJpegPath(value: String): Boolean {
+        val clean = value.substringBefore('?').lowercase()
+        return clean.endsWith(".jpg") || clean.endsWith(".jpeg")
     }
 
     private fun fetchNatureImageUrl(previousUrl: String, deadline: Long): String? {
