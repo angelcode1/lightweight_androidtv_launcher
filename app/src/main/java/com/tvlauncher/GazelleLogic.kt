@@ -1,7 +1,6 @@
 package com.tvlauncher
 
 import java.util.LinkedHashSet
-import kotlin.math.max
 
 object GazelleLogic {
     const val MAX_SOURCE_PIXELS: Long = 3840L * 2160L
@@ -25,9 +24,14 @@ object GazelleLogic {
             return 1
         }
 
-        val widthRatio = ceilDiv(width, reqWidth)
-        val heightRatio = ceilDiv(height, reqHeight)
-        return max(1, max(widthRatio, heightRatio))
+        var sample = 1
+        while (
+            width / (sample * 2L) >= reqWidth &&
+            height / (sample * 2L) >= reqHeight
+        ) {
+            sample *= 2
+        }
+        return sample
     }
 
     fun intervalIndex(
@@ -47,15 +51,11 @@ object GazelleLogic {
     ): List<String> {
         val result = LinkedHashSet<String>()
         savedIds.forEach { savedId ->
-            val replacement = replacementBySavedId[savedId]
-            result.add(replacement ?: savedId)
+            if (!replacementBySavedId.containsKey(savedId)) {
+                return@forEach
+            }
+            result.add(replacementBySavedId[savedId] ?: savedId)
         }
         return result.toList()
-    }
-
-    private fun ceilDiv(value: Int, divisor: Int): Int {
-        return ((value.toLong() + divisor.toLong() - 1L) / divisor.toLong())
-            .coerceAtMost(Int.MAX_VALUE.toLong())
-            .toInt()
     }
 }
