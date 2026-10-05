@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -110,14 +111,10 @@ class AppRepository(private val context: Context) {
 
         val result = mutableListOf<AppEntry>()
         val replacements = mutableMapOf<String, String?>()
-        var launchableApps: List<AppEntry>? = null
 
         savedIds.forEach { savedId ->
             val component = ComponentName.unflattenFromString(savedId)
-            if (component == null) {
-                replacements[savedId] = null
-                return@forEach
-            }
+                ?: return@forEach
 
             val current = resolveActivity(component)
             if (current != null) {
@@ -126,18 +123,18 @@ class AppRepository(private val context: Context) {
                 return@forEach
             }
 
-            val apps = launchableApps ?: queryLaunchableApps().also {
-                launchableApps = it
-            }
-            val fallback = preferredEntryForPackage(component.packageName, apps)
+            val appInfo = getInstalledApplication(component.packageName)
+                ?: return@forEach
 
+            if (!isApplicationEnabled(component.packageName, appInfo)) {
+                replacements[savedId] = null
+                return@forEach
+            }
+
+            val fallback = resolvePreferredLauncherEntry(component.packageName)
             if (fallback != null) {
                 result.add(fallback)
                 replacements[savedId] = fallback.id
-            } else {
-                // App may only be temporarily disabled/unavailable. Preserve its
-                // stored tile id so re-enabling the package restores it.
-                replacements[savedId] = null
             }
         }
 
@@ -148,6 +145,38 @@ class AppRepository(private val context: Context) {
         return result
     }
 
+    @Suppress("DEPRECATION")
+    private fun getInstalledApplication(packageName: String): ApplicationInfo? {
+        return try {
+            packageManager.getApplicationInfo(
+                packageName,
+                PackageManager.GET_DISABLED_COMPONENTS
+            )
+        } catch (_: PackageManager.NameNotFoundException) {
+            null
+        }
+    }
+
+    private fun isApplicationEnabled(
+        packageName: String,
+        appInfo: ApplicationInfo
+    ): Boolean {
+        val explicitState = try {
+            packageManager.getApplicationEnabledSetting(packageName)
+        } catch (_: IllegalArgumentException) {
+            PackageManager.COMPONENT_ENABLED_STATE_DEFAULT
+        }
+
+        if (
+            explicitState == PackageManager.COMPONENT_ENABLED_STATE_DISABLED ||
+            explicitState == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER ||
+            explicitState == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED
+        ) {
+            return false
+        }
+        return appInfo.enabled
+    }
+
     private fun resolveActivity(component: ComponentName): AppEntry? {
         val activity = try {
             packageManager.getActivityInfo(component, 0)
@@ -156,20 +185,36 @@ class AppRepository(private val context: Context) {
         } ?: return null
 
         if (!activity.enabled || !activity.applicationInfo.enabled) return null
-        return activity.toEntry(component)
+        return activity.toEntry(component, isTvApp = false)
     }
 
-    private fun preferredEntryForPackage(
-        packageName: String,
-        apps: List<AppEntry>
-    ): AppEntry? {
-        return apps.asSequence()
-            .filter { it.packageName == packageName }
-            .sortedByDescending { it.isTvApp }
-            .firstOrNull()
+    private fun resolvePreferredLauncherEntry(packageName: String): AppEntry? {
+        val leanback = packageManager.getLeanbackLaunchIntentForPackage(packageName)
+        resolveLaunchIntent(leanback, isTvApp = true)?.let { return it }
+
+        val launcher = packageManager.getLaunchIntentForPackage(packageName)
+        return resolveLaunchIntent(launcher, isTvApp = false)
     }
 
-    private fun ActivityInfo.toEntry(component: ComponentName): AppEntry {
+    private fun resolveLaunchIntent(intent: Intent?, isTvApp: Boolean): AppEntry? {
+        if (intent == null) return null
+        val component = intent.component ?: intent.resolveActivity(packageManager)
+            ?: return null
+
+        val activity = try {
+            packageManager.getActivityInfo(component, 0)
+        } catch (_: Exception) {
+            null
+        } ?: return null
+
+        if (!activity.enabled || !activity.applicationInfo.enabled) return null
+        return activity.toEntry(component, isTvApp)
+    }
+
+    private fun ActivityInfo.toEntry(
+        component: ComponentName,
+        isTvApp: Boolean
+    ): AppEntry {
         val label = loadLabel(packageManager)
             ?.toString()
             ?.trim()
@@ -181,7 +226,7 @@ class AppRepository(private val context: Context) {
             label = label,
             packageName = packageName,
             activityName = name,
-            isTvApp = false
+            isTvApp = isTvApp
         )
     }
 
