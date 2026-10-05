@@ -128,16 +128,21 @@ class WallpaperRefreshJobService : JobService() {
                 if (customUrl != null) putString(ControlReceiver.EXTRA_CUSTOM_URL, customUrl)
             }
 
-            val job = JobInfo.Builder(
-                JOB_ID,
-                ComponentName(context, WallpaperRefreshJobService::class.java)
-            )
-                .setExtras(extras)
-                .build()
+            return try {
+                val job = JobInfo.Builder(
+                    JOB_ID,
+                    ComponentName(context, WallpaperRefreshJobService::class.java)
+                )
+                    .setOverrideDeadline(0L)
+                    .setExtras(extras)
+                    .build()
 
-            return if (scheduler.schedule(job) == JobScheduler.RESULT_SUCCESS) {
-                ScheduleResult.ACCEPTED
-            } else {
+                if (scheduler.schedule(job) == JobScheduler.RESULT_SUCCESS) {
+                    ScheduleResult.ACCEPTED
+                } else {
+                    ScheduleResult.FAILED
+                }
+            } catch (_: Exception) {
                 ScheduleResult.FAILED
             }
         }
