@@ -3,6 +3,7 @@ package com.tvlauncher
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.BroadcastReceiver
+import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -34,6 +35,8 @@ class MainActivity : Activity() {
     private lateinit var wallpaperDim: View
 
     private var lastFocusedPosition = 0
+    private var isHomeVisible = false
+    private var wallpaperReceiverRegistered = false
 
     private val wallpaperChangedReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -383,8 +386,8 @@ class MainActivity : Activity() {
         val tileHeight = (usableHeight / ROWS) - dp(12)
 
         return GridLayout.LayoutParams().apply {
-            width = tileWidth.coerceAtLeast(dp(145))
-            height = tileHeight.coerceIn(dp(118), dp(180))
+            width = tileWidth.coerceAtLeast(1)
+            height = tileHeight.coerceAtLeast(1).coerceAtMost(dp(180))
             setMargins(dp(6), dp(6), dp(6), dp(6))
         }
     }
