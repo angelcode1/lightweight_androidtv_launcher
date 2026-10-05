@@ -550,7 +550,7 @@ object NatureWallpaperManager {
                     else -> return null
                 }
 
-                val contentLength = connection.contentLengthLong
+                val contentLength = connection.contentLength.toLong()
                 if (contentLength > MAX_TEXT_BYTES) return null
 
                 connection.inputStream.bufferedReader().use { reader ->
@@ -617,7 +617,7 @@ object NatureWallpaperManager {
                     else -> return null
                 }
 
-                val contentLength = connection.contentLengthLong
+                val contentLength = connection.contentLength.toLong()
                 if (contentLength > MAX_DOWNLOAD_BYTES) return null
 
                 val type = connection.contentType.orEmpty().lowercase()
