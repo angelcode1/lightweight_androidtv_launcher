@@ -6,6 +6,11 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/release.yml'
+      - 'app/**'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'gradle/**'
+      - 'gradle.properties'
 
 permissions:
   contents: write
