@@ -2,6 +2,10 @@ name: Cut signed Gazelle release
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/release-trigger'
 
 permissions:
   contents: write
