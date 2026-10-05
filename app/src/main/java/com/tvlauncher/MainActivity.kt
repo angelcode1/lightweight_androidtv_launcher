@@ -222,7 +222,9 @@ class MainActivity : Activity() {
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(42), dp(24), dp(42), dp(24))
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(48), dp(36), dp(64), dp(28))
         }
         root.addView(
             content,
@@ -281,6 +283,8 @@ class MainActivity : Activity() {
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
+            clipToPadding = false
         }
 
         val clockContainer = LinearLayout(this).apply {
@@ -319,17 +323,17 @@ class MainActivity : Activity() {
             setPadding(dp(9), dp(9), dp(9), dp(9))
             setOnFocusChangeListener { view, focused ->
                 view.alpha = if (focused) 1f else 0.78f
-                val scale = if (focused) 1.06f else 1f
+                val scale = if (focused) 1.03f else 1f
                 view.scaleX = scale
                 view.scaleY = scale
-                view.elevation = if (focused) dp(5).toFloat() else 0f
+                view.elevation = if (focused) dp(3).toFloat() else 0f
             }
             setOnClickListener { showWallpaperSettings() }
         }
         header.addView(
             wallpaperButton,
-            LinearLayout.LayoutParams(dp(42), dp(42)).apply {
-                marginEnd = dp(10)
+            LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                marginEnd = dp(12)
             }
         )
 
@@ -351,7 +355,9 @@ class MainActivity : Activity() {
         }
         header.addView(
             settingsButton,
-            LinearLayout.LayoutParams(dp(42), dp(42))
+            LinearLayout.LayoutParams(dp(40), dp(40)).apply {
+                marginEnd = dp(8)
+            }
         )
 
         return header
