@@ -526,7 +526,6 @@ object NatureWallpaperManager {
             }
 
             var connection: HttpURLConnection? = null
-            var temp: File? = null
             try {
                 connection = (url.openConnection() as HttpURLConnection).apply {
                     connectTimeout = timeoutFor(deadline, MAX_CONNECT_TIMEOUT_MS)
@@ -594,6 +593,7 @@ object NatureWallpaperManager {
             }
 
             var connection: HttpURLConnection? = null
+            var temp: File? = null
             try {
                 connection = (url.openConnection() as HttpURLConnection).apply {
                     connectTimeout = timeoutFor(deadline, MAX_CONNECT_TIMEOUT_MS)
