@@ -604,6 +604,11 @@ class MainActivity : Activity() {
         }
     }
 
+    private data class FireTvSettingsTarget(
+        val action: String,
+        val className: String
+    )
+
     private fun showSystemSettingsMenu() {
         val labels = arrayOf(
             getString(R.string.settings_network),
@@ -615,53 +620,64 @@ class MainActivity : Activity() {
             getString(R.string.settings_accessibility)
         )
 
-        val activities = arrayOf(
-            ".tv.network.NetworkActivity",
-            ".tv.display_sounds.DisplayAndSoundsActivity",
-            ".tv.applications.ApplicationsActivity",
-            ".tv.controllers_bluetooth_devices.ControllersAndBluetoothActivity",
-            ".tv.preferences.PreferencesActivity",
-            ".tv.device.DeviceActivity",
-            ".tv.accessibility.AccessibilityActivity"
+        val targets = arrayOf(
+            FireTvSettingsTarget(
+                action = Settings.ACTION_WIRELESS_SETTINGS,
+                className = "com.amazon.tv.settings.v2.tv.network.NetworkActivity"
+            ),
+            FireTvSettingsTarget(
+                action = "com.amazon.device.settings.action.DISPLAY_AND_SOUNDS",
+                className = "com.amazon.tv.settings.v2.tv.display_sounds.DisplayAndSoundsActivity"
+            ),
+            FireTvSettingsTarget(
+                action = Settings.ACTION_APPLICATION_SETTINGS,
+                className = "com.amazon.tv.settings.v2.tv.applications.ApplicationsActivity"
+            ),
+            FireTvSettingsTarget(
+                action = "com.amazon.device.settings.action.CONTROLLERS",
+                className = "com.amazon.tv.settings.v2.tv.controllers_bluetooth_devices.ControllersAndBluetoothActivity"
+            ),
+            FireTvSettingsTarget(
+                action = "com.amazon.device.settings.action.PREFERENCES",
+                className = "com.amazon.tv.settings.v2.tv.preferences.PreferencesActivity"
+            ),
+            FireTvSettingsTarget(
+                action = "com.amazon.device.settings.action.DEVICE",
+                className = "com.amazon.tv.settings.v2.tv.device.DeviceActivity"
+            ),
+            FireTvSettingsTarget(
+                action = "com.amazon.device.settings.action.ACCESSIBILITY",
+                className = "com.amazon.tv.settings.v2.tv.accessibility.AccessibilityActivity"
+            )
         )
 
         AlertDialog.Builder(this)
             .setTitle(R.string.settings)
             .setItems(labels) { _, which ->
-                activities.getOrNull(which)?.let(::openFireTvSettingsPage)
+                targets.getOrNull(which)?.let(::openFireTvSettingsPage)
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
-    private fun openFireTvSettingsPage(relativeClassName: String) {
-        val packages = arrayOf(
-            "com.amazon.tv.settings.v2",
-            "com.amazon.tv.settings"
-        )
-
-        packages.forEach { packageName ->
-            val component = ComponentName(
-                packageName,
-                packageName + relativeClassName
+    private fun openFireTvSettingsPage(target: FireTvSettingsTarget) {
+        try {
+            startActivity(
+                Intent(target.action).apply {
+                    component = ComponentName(
+                        FIRE_TV_SETTINGS_PACKAGE,
+                        target.className
+                    )
+                    addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                }
             )
-            try {
-                startActivity(
-                    Intent(Intent.ACTION_MAIN).apply {
-                        this.component = component
-                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-                    }
-                )
-                return
-            } catch (_: Exception) {
-            }
+        } catch (_: Exception) {
+            Toast.makeText(
+                this,
+                R.string.settings_open_failed,
+                Toast.LENGTH_SHORT
+            ).show()
         }
-
-        Toast.makeText(
-            this,
-            R.string.settings_open_failed,
-            Toast.LENGTH_SHORT
-        ).show()
     }
 
     private fun showWallpaperSettings() {
@@ -900,5 +916,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val CAROUSEL_VISIBLE_ITEMS = 7
+        private const val FIRE_TV_SETTINGS_PACKAGE = "com.amazon.tv.settings.v2"
     }
 }
