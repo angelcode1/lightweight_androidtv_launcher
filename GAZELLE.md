@@ -13,7 +13,7 @@ Fire TV Cube 3 (AFTGAZL / gazelle) optimized branch.
 - Stores explicit component names, with package fallback if an app update renames the activity.
 - Uses a 6 x 3 Home grid: up to 17 apps plus the Add tile.
 - Releases icon and wallpaper bitmaps when the launcher is hidden.
-- Keeps changing wallpapers without a resident worker or service.
+- Keeps changing wallpapers without a resident process; HA-triggered wallpaper work is handed to a short-lived JobService.
 
 ## Build
 
@@ -39,7 +39,7 @@ Sources currently implemented:
 
 The changing-wallpaper mechanism itself is derived from upstream. Gazelle-specific hardening includes HTTPS-only image URLs, a 12 MB image cap, decode validation, and removal of the Picsum/Reddit fallback tiers.
 
-Only one image is cached. A network check happens only when the launcher becomes visible and the configured interval has expired. Images are decoded using RGB_565.
+Only one image is cached. Foreground refresh checks happen when the launcher becomes visible and the configured interval has expired. HA-triggered refreshes are accepted by the broadcast receiver, then executed by JobScheduler/JobService outside the broadcast timeout. Images are dimension-validated, capped to an 8.3 MP source pixel budget, and decoded using RGB_565.
 
 Bing's HPImageArchive endpoint is not a documented public API and should be treated as replaceable. Google TV Ambient Mode, Amazon Ambient Experience and Roku Backdrops likewise do not expose documented third-party wallpaper-feed APIs suitable for a stable dependency.
 
@@ -115,3 +115,14 @@ Do not disable the Amazon launcher until Home, reboot, sleep/wake, Settings, app
 ## Measurement
 
 No Cube-specific RAM or CPU claim is made yet. Measure the upstream launcher, Gazelle launcher, and Amazon launcher on the same AFTGAZL under the same conditions before drawing conclusions about PSS/USS/RSS or idle CPU.
+
+
+## Verification status
+
+The branch now includes real unit tests for:
+- decode-bomb dimension rejection;
+- dominant-dimension sample-size calculation;
+- 1-hour interval index preservation;
+- unresolved tile preservation and component repair.
+
+The source has been repaired for the previously confirmed ComponentCallbacks2 compile failure. A full Gradle/AAPT/lint/R8 run is still required before installation; do not treat source review alone as a successful build.
