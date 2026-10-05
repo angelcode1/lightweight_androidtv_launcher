@@ -132,8 +132,6 @@ class WallpaperRefreshJobService : JobService() {
                 JOB_ID,
                 ComponentName(context, WallpaperRefreshJobService::class.java)
             )
-                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                .setOverrideDeadline(1L)
                 .setExtras(extras)
                 .build()
 
