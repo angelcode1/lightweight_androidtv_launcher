@@ -10,9 +10,9 @@ Fire TV Cube 3 (AFTGAZL / gazelle) optimized branch.
 - Removed AndroidX runtime dependencies.
 - Replaced RecyclerView/ConstraintLayout/AppCompat with Android framework UI.
 - Shows both Android TV and normal phone/tablet launcher activities.
-- Stores explicit component names, with package fallback if an app update renames the activity.
-- Uses a 6 x 3 Home grid: up to 17 apps plus the Add tile.
-- Releases icon and wallpaper bitmaps when the launcher is hidden.
+- Stores explicit component names, with direct package fallback if an app update renames the activity.
+- Uses a responsive 6 x 3 Home grid: up to 17 apps plus the Add tile.
+- Keeps the small icon cache warm across ordinary app launches while releasing the large wallpaper bitmap when HOME stops.
 - Keeps changing wallpapers without a resident process; HA-triggered wallpaper work is handed to a short-lived JobService.
 
 ## Build
@@ -26,22 +26,36 @@ Release builds are unsigned unless all four signing variables are provided:
     SIGNING_KEY_ALIAS
     SIGNING_KEY_PASSWORD
 
-Do not install a temporary debug/CI-signed APK if the device is intended to keep launcher configuration across upgrades. Create and use the permanent Gazelle signing key first.
+Create and use the permanent Gazelle signing key before the first device install if launcher configuration must survive upgrades.
 
 ## Wallpaper design
 
 Sources currently implemented:
 
-- solid: no wallpaper bitmap.
-- bing: Bing homepage image collection, Australian market.
-- nature: Wallhaven safe nature search.
+- solid: no wallpaper bitmap;
+- bing: Bing homepage image collection, Australian market;
+- nature: Wallhaven safe nature search;
 - custom: direct HTTPS image.
 
-The changing-wallpaper mechanism itself is derived from upstream. Gazelle-specific hardening includes HTTPS-only image URLs, a 12 MB image cap, decode validation, and removal of the Picsum/Reddit fallback tiers.
+Gazelle-specific hardening includes HTTPS-only image URLs, a 12 MB download cap, source dimension validation, an 8.3 MP source-pixel cap, a total refresh deadline, cache/source-key validation, and removal of the Picsum/Reddit fallback tiers.
 
-Only one image is cached. Foreground refresh checks happen when the launcher becomes visible and the configured interval has expired. HA-triggered refreshes are accepted by the broadcast receiver, then executed by JobScheduler/JobService outside the broadcast timeout. Images are dimension-validated, capped to an 8.3 MP source pixel budget, and decoded using RGB_565.
+Centre-crop decoding uses the largest power-of-two BitmapFactory sample that leaves both decoded dimensions at least as large as the display target. This avoids decode bombs without downsampling common 2560x1440 or 1920x1200 wallpapers and then forcing CENTER_CROP to upscale them.
+
+Each refresh captures the source configuration at start. Different source configurations may refresh concurrently, but a stale refresh cannot replace the cache or advance LAST_FETCH after the source/custom URL changes. The cache stores its configuration key and is not displayed for another source.
 
 Bing's HPImageArchive endpoint is not a documented public API and should be treated as replaceable. Google TV Ambient Mode, Amazon Ambient Experience and Roku Backdrops likewise do not expose documented third-party wallpaper-feed APIs suitable for a stable dependency.
+
+## Pinned-app repair
+
+Pinned entries are handled as follows:
+
+- component still valid: show it;
+- package installed and enabled but component renamed: resolve that package directly with getLeanbackLaunchIntentForPackage() then getLaunchIntentForPackage(), and repair the saved component;
+- package installed but disabled: hide it temporarily and preserve the saved id;
+- package uninstalled: remove the stale id;
+- package installed/enabled but no longer launchable: remove the stale id.
+
+Repair does not enumerate or load labels for every installed launcher activity.
 
 ## Home Assistant satellite IPC
 
@@ -49,44 +63,80 @@ The launcher exposes local Android broadcast actions protected by:
 
     com.gazelle.launcher.permission.CONTROL
 
-The permission uses signature protection. The Gazelle satellite app should therefore be signed with the same certificate as the launcher.
+The Gazelle satellite should use the same permanent signing certificate and declare the permission contract shown in:
+
+    docs/satellite-control-manifest.xml
+
+### HOME and LAUNCH: synchronous ordered-broadcast contract
 
 Actions:
 
     com.gazelle.launcher.action.HOME
     com.gazelle.launcher.action.LAUNCH
-    com.gazelle.launcher.action.WALLPAPER_REFRESH
-    com.gazelle.launcher.action.WALLPAPER_SET_SOURCE
+
+If the caller needs a result, it MUST send an ordered broadcast.
+
+These actions return only the ordered-broadcast result:
+
+    RESULT_OK       + home_started
+    RESULT_OK       + launch_started
+    RESULT_CANCELED + home_start_failed
+    RESULT_CANCELED + launch_failed
+
+HOME and LAUNCH do not send com.gazelle.launcher.action.RESULT, and reply_package/request_id are not used for their completion result.
 
 LAUNCH accepts:
 
     component
     package
 
-If both are provided, component is tried first and package is used as fallback. If only package is provided, the launcher resolves the current launch activity for that package.
+When both are supplied, component is tried first and package is the fallback. With only package, the launcher uses getLeanbackLaunchIntentForPackage() then getLaunchIntentForPackage().
 
-Commands may include:
+### Wallpaper commands: asynchronous contract
+
+Actions:
+
+    com.gazelle.launcher.action.WALLPAPER_REFRESH
+    com.gazelle.launcher.action.WALLPAPER_SET_SOURCE
+
+An ordered result of:
+
+    RESULT_OK + accepted
+
+means only that the asynchronous operation was accepted/queued. It does NOT mean the network operation completed successfully.
+
+For the final result, the caller supplies:
 
     request_id
     reply_package
 
-The receiver then returns:
+The launcher later sends:
 
     com.gazelle.launcher.action.RESULT
 
-with:
+to reply_package with:
 
     request_id
     command
     success
     message
 
-Ordered broadcasts also receive RESULT_OK / RESULT_CANCELED and resultData.
+Possible final messages include:
+
+    wallpaper_refreshed
+    wallpaper_source_set
+    wallpaper_refresh_failed
+    wallpaper_source_fetch_failed
+    already_in_progress
+    superseded
+    schedule_failed
 
 WALLPAPER_SET_SOURCE accepts:
 
     source = solid | bing | nature | custom
     custom_url = optional HTTPS image URL
+
+The solid source completes immediately but follows the same wallpaper API shape: the ordered broadcast returns accepted and, when reply_package is supplied, the final ACTION_RESULT reports wallpaper_source_set.
 
 Recommended architecture:
 
@@ -100,7 +150,7 @@ This avoids a listening TCP socket or permanent control service in the launcher.
 
 ## Platform scope
 
-The current Cube 3 Fire OS 7 target is Android 9 / API 28, where this background receiver launch path is suitable. A future LineageOS port based on newer Android versions must re-evaluate background activity launch restrictions rather than assuming the same mechanism will work unchanged.
+The current Cube 3 Fire OS 7 target is Android 9 / API 28, where this background receiver launch path is suitable. A future LineageOS port based on newer Android versions must re-evaluate background-activity-launch restrictions.
 
 ## Cube installation
 
@@ -114,15 +164,17 @@ Do not disable the Amazon launcher until Home, reboot, sleep/wake, Settings, app
 
 ## Measurement
 
-No Cube-specific RAM or CPU claim is made yet. Measure the upstream launcher, Gazelle launcher, and Amazon launcher on the same AFTGAZL under the same conditions before drawing conclusions about PSS/USS/RSS or idle CPU.
-
+No Cube-specific RAM or CPU claim is made yet. Measure the upstream launcher, Gazelle launcher and Amazon launcher on the same AFTGAZL under the same conditions before drawing conclusions about PSS/USS/RSS or idle CPU.
 
 ## Verification status
 
-The branch now includes real unit tests for:
-- decode-bomb dimension rejection;
-- dominant-dimension sample-size calculation;
-- 1-hour interval index preservation;
-- unresolved tile preservation and component repair.
+At commit af4fb8e, all Kotlin source files compiled against android-34.jar using a stub R, all R references resolved, and the five pure unit tests passed under a minimal JUnit shim. AAPT, lint, R8 and on-device behavior remained unverified.
 
-The source has been repaired for the previously confirmed ComponentCallbacks2 compile failure. A full Gradle/AAPT/lint/R8 run is still required before installation; do not treat source review alone as a successful build.
+Subsequent fixes changed sampling, pinned-app repair, wallpaper source-race handling and HOME lifecycle behavior, so those changes require the same compile/test pass again before the branch should be treated as build-verified.
+
+Current pure tests cover:
+
+- decode-bomb dimension rejection;
+- centre-crop-safe power-of-two sample-size calculation;
+- 1-hour interval index preservation;
+- disabled-id preservation, uninstalled-id pruning and component repair.
