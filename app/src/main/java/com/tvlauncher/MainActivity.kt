@@ -53,30 +53,25 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         repository = AppRepository(this)
         setContentView(buildUi())
-        registerWallpaperReceiver()
     }
 
     override fun onStart() {
         super.onStart()
+        isHomeVisible = true
         registerWallpaperReceiver()
     }
 
     override fun onResume() {
         super.onResume()
-        isHomeVisible = true
         populateGrid()
         applyWallpaperFromCache()
         refreshWallpaperIfNeeded(force = false)
     }
 
-    override fun onPause() {
-        isHomeVisible = false
-        releaseWallpaperBitmap()
-        super.onPause()
-    }
-
     override fun onStop() {
+        isHomeVisible = false
         unregisterWallpaperReceiver()
+        releaseWallpaperBitmap()
         super.onStop()
     }
 
