@@ -13,7 +13,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.HashSet
 import kotlin.math.min
 
 object NatureWallpaperManager {
@@ -34,8 +34,10 @@ object NatureWallpaperManager {
     private const val PREF_DIM = "dim"
     private const val PREF_LAST_FETCH = "last_fetch"
     private const val PREF_LAST_REMOTE_URL = "last_remote_url"
+    private const val PREF_CACHE_KEY = "cache_key"
 
     private const val CACHE_FILE_NAME = "gazelle-wallpaper.img"
+    private const val CACHE_BACKUP_NAME = "gazelle-wallpaper.bak"
     private const val MAX_DOWNLOAD_BYTES = 12L * 1024L * 1024L
     private const val MAX_TEXT_BYTES = 1024L * 1024L
     private const val MAX_REDIRECTS = 5
@@ -43,22 +45,32 @@ object NatureWallpaperManager {
     private const val MAX_CONNECT_TIMEOUT_MS = 5_000
     private const val MAX_READ_TIMEOUT_MS = 8_000
 
-    private val refreshing = AtomicBoolean(false)
+    private val stateLock = Any()
+    private val activeRefreshKeys = HashSet<String>()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     enum class RefreshResult {
         SUCCESS,
         FAILED,
-        BUSY
+        BUSY,
+        STALE
     }
 
-    fun getSource(context: Context): String {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private data class RefreshConfig(
+        val source: String,
+        val customUrl: String
+    ) {
+        val key: String
+            get() = if (source == SOURCE_CUSTOM) "$source\n$customUrl" else source
+    }
+
+    fun getSource(context: Context): String = synchronized(stateLock) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(PREF_SOURCE, SOURCE_SOLID)
             ?: SOURCE_SOLID
     }
 
-    fun setSource(context: Context, source: String) {
+    fun setSource(context: Context, source: String) = synchronized(stateLock) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (prefs.getString(PREF_SOURCE, SOURCE_SOLID) != source) {
             prefs.edit()
@@ -80,18 +92,21 @@ object NatureWallpaperManager {
             .apply()
     }
 
-    fun getCustomUrl(context: Context): String {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    fun getCustomUrl(context: Context): String = synchronized(stateLock) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(PREF_CUSTOM_URL, "")
             .orEmpty()
     }
 
-    fun setCustomUrl(context: Context, url: String) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(PREF_CUSTOM_URL, url.trim())
-            .putLong(PREF_LAST_FETCH, 0L)
-            .apply()
+    fun setCustomUrl(context: Context, url: String) = synchronized(stateLock) {
+        val trimmed = url.trim()
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getString(PREF_CUSTOM_URL, "").orEmpty() != trimmed) {
+            prefs.edit()
+                .putString(PREF_CUSTOM_URL, trimmed)
+                .putLong(PREF_LAST_FETCH, 0L)
+                .apply()
+        }
     }
 
     fun isDimEnabled(context: Context): Boolean {
@@ -107,12 +122,15 @@ object NatureWallpaperManager {
     }
 
     fun shouldRefresh(context: Context): Boolean {
-        if (getSource(context) == SOURCE_SOLID) return false
+        val config = snapshotConfig(context)
+        if (config.source == SOURCE_SOLID) return false
+
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val cache = cacheFile(context)
         if (!cache.exists() || cache.length() == 0L) return true
+        if (prefs.getString(PREF_CACHE_KEY, "").orEmpty() != config.key) return true
 
-        val lastFetch = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getLong(PREF_LAST_FETCH, 0L)
+        val lastFetch = prefs.getLong(PREF_LAST_FETCH, 0L)
         return System.currentTimeMillis() - lastFetch >= getInterval(context)
     }
 
@@ -121,6 +139,14 @@ object NatureWallpaperManager {
         targetWidth: Int,
         targetHeight: Int
     ): Drawable? {
+        val config = snapshotConfig(context)
+        if (config.source == SOURCE_SOLID) return null
+
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getString(PREF_CACHE_KEY, "").orEmpty() != config.key) {
+            return null
+        }
+
         val file = cacheFile(context)
         if (!file.exists() || file.length() == 0L) return null
 
@@ -133,7 +159,8 @@ object NatureWallpaperManager {
         force: Boolean,
         onComplete: (RefreshResult) -> Unit = {}
     ) {
-        if (getSource(context) == SOURCE_SOLID) {
+        val config = snapshotConfig(context)
+        if (config.source == SOURCE_SOLID) {
             mainHandler.post { onComplete(RefreshResult.SUCCESS) }
             return
         }
@@ -143,9 +170,11 @@ object NatureWallpaperManager {
             return
         }
 
-        if (!refreshing.compareAndSet(false, true)) {
-            mainHandler.post { onComplete(RefreshResult.BUSY) }
-            return
+        synchronized(stateLock) {
+            if (!activeRefreshKeys.add(config.key)) {
+                mainHandler.post { onComplete(RefreshResult.BUSY) }
+                return
+            }
         }
 
         Thread {
@@ -154,20 +183,22 @@ object NatureWallpaperManager {
             try {
                 val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 val previousUrl = prefs.getString(PREF_LAST_REMOTE_URL, "").orEmpty()
-                val remoteUrl = when (getSource(context)) {
+                val remoteUrl = when (config.source) {
                     SOURCE_BING -> fetchBingImageUrl(previousUrl, deadline)
                     SOURCE_NATURE -> fetchNatureImageUrl(previousUrl, deadline)
-                    SOURCE_CUSTOM -> getCustomUrl(context).takeIf { isHttpsUrl(it) }
+                    SOURCE_CUSTOM -> config.customUrl.takeIf { isHttpsUrl(it) }
                     else -> null
                 }
 
                 if (!remoteUrl.isNullOrBlank() && !deadlineExpired(deadline)) {
-                    if (downloadImage(context, remoteUrl, deadline)) {
-                        prefs.edit()
-                            .putLong(PREF_LAST_FETCH, System.currentTimeMillis())
-                            .putString(PREF_LAST_REMOTE_URL, remoteUrl)
-                            .apply()
-                        result = RefreshResult.SUCCESS
+                    val temp = downloadImageToTemp(context, remoteUrl, deadline)
+                    if (temp != null) {
+                        result = commitDownloadedImage(
+                            context = context,
+                            temp = temp,
+                            config = config,
+                            remoteUrl = remoteUrl
+                        )
                     }
                 }
             } catch (_: Exception) {
@@ -175,13 +206,63 @@ object NatureWallpaperManager {
             } catch (_: OutOfMemoryError) {
                 result = RefreshResult.FAILED
             } finally {
-                refreshing.set(false)
+                synchronized(stateLock) {
+                    activeRefreshKeys.remove(config.key)
+                }
                 mainHandler.post { onComplete(result) }
             }
         }.apply {
             name = "gazelle-wallpaper-refresh"
             isDaemon = true
         }.start()
+    }
+
+    private fun snapshotConfig(context: Context): RefreshConfig = synchronized(stateLock) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        RefreshConfig(
+            source = prefs.getString(PREF_SOURCE, SOURCE_SOLID) ?: SOURCE_SOLID,
+            customUrl = prefs.getString(PREF_CUSTOM_URL, "").orEmpty()
+        )
+    }
+
+    private fun commitDownloadedImage(
+        context: Context,
+        temp: File,
+        config: RefreshConfig,
+        remoteUrl: String
+    ): RefreshResult = synchronized(stateLock) {
+        val current = snapshotConfig(context)
+        if (current != config) {
+            temp.delete()
+            return@synchronized RefreshResult.STALE
+        }
+
+        val destination = cacheFile(context)
+        val backup = File(context.cacheDir, CACHE_BACKUP_NAME)
+        backup.delete()
+
+        if (destination.exists() && !destination.renameTo(backup)) {
+            temp.delete()
+            return@synchronized RefreshResult.FAILED
+        }
+
+        if (!temp.renameTo(destination)) {
+            if (backup.exists()) {
+                backup.renameTo(destination)
+            }
+            temp.delete()
+            return@synchronized RefreshResult.FAILED
+        }
+
+        backup.delete()
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putLong(PREF_LAST_FETCH, System.currentTimeMillis())
+            .putString(PREF_LAST_REMOTE_URL, remoteUrl)
+            .putString(PREF_CACHE_KEY, config.key)
+            .apply()
+
+        RefreshResult.SUCCESS
     }
 
     private fun fetchBingImageUrl(previousUrl: String, deadline: Long): String? {
@@ -246,7 +327,7 @@ object NatureWallpaperManager {
                     setRequestProperty("Accept", "application/json,text/plain,*/*")
                 }
 
-                when (val status = connection.responseCode) {
+                when (connection.responseCode) {
                     HttpURLConnection.HTTP_MOVED_PERM,
                     HttpURLConnection.HTTP_MOVED_TEMP,
                     HttpURLConnection.HTTP_SEE_OTHER,
@@ -270,9 +351,7 @@ object NatureWallpaperManager {
                     var total = 0L
                     while (!deadlineExpired(deadline)) {
                         val count = reader.read(buffer)
-                        if (count <= 0) {
-                            return builder.toString()
-                        }
+                        if (count <= 0) return builder.toString()
                         total += count
                         if (total > MAX_TEXT_BYTES) return null
                         builder.append(buffer, 0, count)
@@ -288,21 +367,21 @@ object NatureWallpaperManager {
         return null
     }
 
-    private fun downloadImage(
+    private fun downloadImageToTemp(
         context: Context,
         initialUrl: String,
         deadline: Long
-    ): Boolean {
+    ): File? {
         var currentUrl = initialUrl
         var redirects = 0
 
         while (redirects <= MAX_REDIRECTS && !deadlineExpired(deadline)) {
-            if (!isHttpsUrl(currentUrl)) return false
+            if (!isHttpsUrl(currentUrl)) return null
 
             val url = try {
                 URL(currentUrl)
             } catch (_: Exception) {
-                return false
+                return null
             }
 
             var connection: HttpURLConnection? = null
@@ -315,28 +394,32 @@ object NatureWallpaperManager {
                     setRequestProperty("Accept", "image/*")
                 }
 
-                when (val status = connection.responseCode) {
+                when (connection.responseCode) {
                     HttpURLConnection.HTTP_MOVED_PERM,
                     HttpURLConnection.HTTP_MOVED_TEMP,
                     HttpURLConnection.HTTP_SEE_OTHER,
                     307,
                     308 -> {
-                        val location = connection.getHeaderField("Location") ?: return false
+                        val location = connection.getHeaderField("Location") ?: return null
                         currentUrl = URL(url, location).toString()
                         redirects++
                         continue
                     }
                     in 200..299 -> Unit
-                    else -> return false
+                    else -> return null
                 }
 
                 val contentLength = connection.contentLengthLong
-                if (contentLength > MAX_DOWNLOAD_BYTES) return false
+                if (contentLength > MAX_DOWNLOAD_BYTES) return null
 
                 val type = connection.contentType.orEmpty().lowercase()
-                if (type.isNotEmpty() && !type.startsWith("image/")) return false
+                if (type.isNotEmpty() && !type.startsWith("image/")) return null
 
-                val temp = File(context.cacheDir, CACHE_FILE_NAME + ".tmp")
+                val temp = File.createTempFile(
+                    "gazelle-wallpaper-",
+                    ".tmp",
+                    context.cacheDir
+                )
                 var total = 0L
                 connection.inputStream.use { input ->
                     FileOutputStream(temp).use { output ->
@@ -347,7 +430,7 @@ object NatureWallpaperManager {
                             total += count
                             if (total > MAX_DOWNLOAD_BYTES) {
                                 temp.delete()
-                                return false
+                                return null
                             }
                             output.write(buffer, 0, count)
                         }
@@ -357,32 +440,22 @@ object NatureWallpaperManager {
 
                 if (deadlineExpired(deadline)) {
                     temp.delete()
-                    return false
+                    return null
                 }
 
                 if (total < 1024L || !isValidImage(temp)) {
                     temp.delete()
-                    return false
+                    return null
                 }
 
-                val destination = cacheFile(context)
-                if (destination.exists() && !destination.delete()) {
-                    temp.delete()
-                    return false
-                }
-
-                if (!temp.renameTo(destination)) {
-                    temp.delete()
-                    return false
-                }
-                return true
+                return temp
             } catch (_: Exception) {
-                return false
+                return null
             } finally {
                 connection?.disconnect()
             }
         }
-        return false
+        return null
     }
 
     private fun isValidImage(file: File): Boolean {
