@@ -259,7 +259,7 @@ class MainActivity : Activity() {
             clipToPadding = false
             addView(
                 appRow,
-                HorizontalScrollView.LayoutParams(
+                FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.MATCH_PARENT
                 )
