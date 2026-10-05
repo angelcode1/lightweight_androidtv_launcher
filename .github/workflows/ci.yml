@@ -1,10 +1,10 @@
-name: CI
+name: Gazelle CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [gazelle]
   pull_request:
-    branches: [main, master]
+    branches: [gazelle]
 
 jobs:
   build:
@@ -25,6 +25,24 @@ jobs:
       - name: Install Android SDK components
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
+      - name: Assert tests exist
+        run: test -n "$(find app/src/test -type f -name '*Test.kt' -print -quit)"
+
+      - name: Assert removed stacks stay removed
+        run: |
+          if grep -RniE "appcompat|recyclerview|constraintlayout|androidx\.work" app/src app/build.gradle; then
+            echo "Removed runtime stack referenced again."
+            exit 1
+          fi
+
+      - name: Inspect runtime dependency graph
+        run: |
+          ./gradlew :app:dependencies --configuration debugRuntimeClasspath --no-daemon > runtime-deps.txt
+          if grep -iE "androidx\.appcompat|androidx\.recyclerview|androidx\.constraintlayout|androidx\.work" runtime-deps.txt; then
+            cat runtime-deps.txt
+            exit 1
+          fi
+
       - name: Run unit tests
         run: ./gradlew test --no-daemon
 
@@ -32,4 +50,21 @@ jobs:
         run: ./gradlew lint --no-daemon
 
       - name: Assemble debug APK
-        run: ./gradlew assembleGithubDebug assembleFdroidDebug --no-daemon
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Assemble unsigned release APK
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: gazelle-launcher-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+
+
+      - name: Upload unsigned release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: gazelle-launcher-release-unsigned
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error

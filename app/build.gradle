@@ -3,47 +3,34 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def releaseStoreFile = System.getenv("SIGNING_STORE_FILE")
+def releaseStorePassword = System.getenv("SIGNING_STORE_PASSWORD")
+def releaseKeyAlias = System.getenv("SIGNING_KEY_ALIAS")
+def releaseKeyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+def hasReleaseSigning = releaseStoreFile && releaseStorePassword && releaseKeyAlias && releaseKeyPassword
+
 android {
     namespace 'com.tvlauncher'
     compileSdk 34
 
     defaultConfig {
-        applicationId "com.tvlauncher"
+        applicationId "com.gazelle.launcher"
         minSdk 21
         targetSdk 34
-        versionCode 10601
-        versionName "1.6.1"
-    }
-
-    flavorDimensions "store"
-    productFlavors {
-        github {
-            dimension "store"
-            buildConfigField "boolean", "UPDATES_ENABLED", "true"
-        }
-        fdroid {
-            dimension "store"
-            buildConfigField "boolean", "UPDATES_ENABLED", "false"
-        }
+        versionCode 10606
+        versionName "1.6.1-gazelle.5"
     }
 
     signingConfigs {
         debug {
-            // Use default debug keystore
+            // Android Gradle Plugin creates/uses the standard debug key.
         }
-        release {
-            // CI: use keystore from GitHub Secrets (SIGNING_* env vars). Local: use debug keystore.
-            def storeFileEnv = System.getenv("SIGNING_STORE_FILE")
-            if (storeFileEnv) {
-                storeFile file(storeFileEnv)
-                storePassword System.getenv("SIGNING_STORE_PASSWORD")
-                keyAlias System.getenv("SIGNING_KEY_ALIAS")
-                keyPassword System.getenv("SIGNING_KEY_PASSWORD")
-            } else {
-                storeFile file(System.getProperty("user.home") + "/.android/debug.keystore")
-                storePassword "android"
-                keyAlias "androiddebugkey"
-                keyPassword "android"
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
             }
         }
     }
@@ -57,34 +44,26 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.release
-            
-            // R8 optimization flags (R8 is enabled by default when minifyEnabled is true)
-            // These are implicit but documented here for clarity
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
         }
     }
-    
-    // Enable R8 full mode optimizations
+
     buildFeatures {
-        buildConfig true
+        buildConfig false
     }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
+
     kotlinOptions {
         jvmTarget = '1.8'
     }
 }
 
 dependencies {
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'androidx.core:core-ktx:1.12.0'
-    implementation 'androidx.recyclerview:recyclerview:1.3.2'
-    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
-    implementation 'androidx.work:work-runtime-ktx:2.9.0'
-
     testImplementation 'junit:junit:4.13.2'
 }
-
-
