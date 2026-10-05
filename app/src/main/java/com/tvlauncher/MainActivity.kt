@@ -678,12 +678,29 @@ class MainActivity : Activity() {
                 }
             )
         } catch (_: Exception) {
-            Toast.makeText(
-                this,
-                R.string.settings_open_failed,
-                Toast.LENGTH_SHORT
-            ).show()
+            openGenericSettingsFallback(target.action)
         }
+    }
+
+    private fun openGenericSettingsFallback(action: String) {
+        val intents = listOf(
+            Intent(action),
+            Intent(Settings.ACTION_SETTINGS)
+        )
+
+        intents.forEach { intent ->
+            try {
+                startActivity(intent)
+                return
+            } catch (_: Exception) {
+            }
+        }
+
+        Toast.makeText(
+            this,
+            R.string.settings_open_failed,
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun showWallpaperSettings() {
