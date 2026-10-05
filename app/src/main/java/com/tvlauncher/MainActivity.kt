@@ -77,7 +77,7 @@ class MainActivity : Activity() {
 
     override fun onTrimMemory(level: Int) {
         repository.clearIconCache()
-        if (level >= TRIM_MEMORY_UI_HIDDEN) {
+        if (level >= ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN) {
             wallpaperImage.setImageDrawable(null)
         }
         super.onTrimMemory(level)

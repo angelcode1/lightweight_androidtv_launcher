@@ -26,9 +26,7 @@ class AppRepository(private val context: Context) {
     ) {
         override fun removeEldestEntry(
             eldest: MutableMap.MutableEntry<String, Drawable>?
-        ): Boolean {
-            return size > ICON_CACHE_MAX
-        }
+        ): Boolean = size > ICON_CACHE_MAX
     }
 
     fun queryLaunchableApps(): List<AppEntry> {
@@ -82,8 +80,9 @@ class AppRepository(private val context: Context) {
     }
 
     fun getSelectedIds(): List<String> {
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val encoded = prefs.getString(PREF_ORDER, null).orEmpty()
+        val encoded = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(PREF_ORDER, null)
+            .orEmpty()
         if (encoded.isEmpty()) return emptyList()
 
         return encoded.split(ORDER_DELIMITER)
@@ -110,28 +109,57 @@ class AppRepository(private val context: Context) {
         val ids = getSelectedIds()
         if (ids.isEmpty()) return emptyList()
 
-        val validIds = mutableListOf<String>()
+        val repairedIds = mutableListOf<String>()
         val result = mutableListOf<AppEntry>()
+        var launchableApps: List<AppEntry>? = null
 
         ids.forEach { id ->
             val component = ComponentName.unflattenFromString(id) ?: return@forEach
-            val activity = try {
-                packageManager.getActivityInfo(component, 0)
-            } catch (_: Exception) {
-                null
-            } ?: return@forEach
+            val current = resolveActivity(component)
 
-            if (!activity.enabled || !activity.applicationInfo.enabled) return@forEach
+            if (current != null) {
+                result.add(current)
+                repairedIds.add(current.id)
+                return@forEach
+            }
 
-            result.add(activity.toEntry(component))
-            validIds.add(id)
+            // App updates sometimes rename launcher aliases/activities. Preserve the
+            // tile by resolving the package's current preferred launcher component.
+            val apps = launchableApps ?: queryLaunchableApps().also {
+                launchableApps = it
+            }
+            val fallback = preferredEntryForPackage(component.packageName, apps)
+                ?: return@forEach
+
+            result.add(fallback)
+            repairedIds.add(fallback.id)
         }
 
-        if (validIds != ids) {
-            saveSelectedIds(validIds)
+        if (repairedIds != ids) {
+            saveSelectedIds(repairedIds)
         }
-
         return result
+    }
+
+    private fun resolveActivity(component: ComponentName): AppEntry? {
+        val activity = try {
+            packageManager.getActivityInfo(component, 0)
+        } catch (_: Exception) {
+            null
+        } ?: return null
+
+        if (!activity.enabled || !activity.applicationInfo.enabled) return null
+        return activity.toEntry(component)
+    }
+
+    private fun preferredEntryForPackage(
+        packageName: String,
+        apps: List<AppEntry> = queryLaunchableApps()
+    ): AppEntry? {
+        return apps.asSequence()
+            .filter { it.packageName == packageName }
+            .sortedByDescending { it.isTvApp }
+            .firstOrNull()
     }
 
     private fun ActivityInfo.toEntry(component: ComponentName): AppEntry {
@@ -165,10 +193,18 @@ class AppRepository(private val context: Context) {
     }
 
     fun launch(entry: AppEntry): Boolean {
-        return launchComponent(entry.component)
+        return launchComponent(entry.component, entry.packageName)
     }
 
-    fun launchComponent(component: ComponentName): Boolean {
+    fun launchComponent(
+        component: ComponentName,
+        fallbackPackage: String = component.packageName
+    ): Boolean {
+        if (launchComponentExact(component)) return true
+        return launchPackage(fallbackPackage)
+    }
+
+    private fun launchComponentExact(component: ComponentName): Boolean {
         return try {
             val intent = Intent(Intent.ACTION_MAIN).apply {
                 this.component = component
@@ -182,12 +218,10 @@ class AppRepository(private val context: Context) {
     }
 
     fun launchPackage(packageName: String): Boolean {
-        val match = queryLaunchableApps()
-            .filter { it.packageName == packageName }
-            .sortedByDescending { it.isTvApp }
-            .firstOrNull()
-
-        if (match != null && launch(match)) return true
+        val match = preferredEntryForPackage(packageName)
+        if (match != null && launchComponentExact(match.component)) {
+            return true
+        }
 
         return try {
             val fallback = packageManager.getLaunchIntentForPackage(packageName)
@@ -198,18 +232,6 @@ class AppRepository(private val context: Context) {
         } catch (_: Exception) {
             false
         }
-    }
-
-    fun launchLabel(label: String): Boolean {
-        val needle = label.trim()
-        if (needle.isEmpty()) return false
-
-        val apps = queryLaunchableApps()
-        val match = apps.firstOrNull { it.label.equals(needle, ignoreCase = true) }
-            ?: apps.firstOrNull { it.label.startsWith(needle, ignoreCase = true) }
-            ?: apps.firstOrNull { it.label.contains(needle, ignoreCase = true) }
-
-        return match?.let { launch(it) } ?: false
     }
 
     fun loadRoundedIcon(entry: AppEntry, sizePx: Int): Drawable {

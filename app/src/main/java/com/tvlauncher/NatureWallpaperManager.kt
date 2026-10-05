@@ -132,7 +132,10 @@ object NatureWallpaperManager {
             return
         }
 
-        if (!refreshing.compareAndSet(false, true)) return
+        if (!refreshing.compareAndSet(false, true)) {
+            mainHandler.post { onComplete(false) }
+            return
+        }
 
         Thread {
             var success = false
