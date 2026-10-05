@@ -1,257 +1,267 @@
 package com.tvlauncher
 
-import android.content.Intent
+import android.app.Activity
+import android.graphics.Color
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.widget.BaseAdapter
 import android.widget.Button
 import android.widget.EditText
-import android.widget.ProgressBar
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
-import androidx.recyclerview.widget.GridLayoutManager
-import androidx.recyclerview.widget.RecyclerView
+import java.util.LinkedHashSet
+import java.util.Locale
 
-class AppSelectionActivity : AppCompatActivity() {
+class AppSelectionActivity : Activity() {
+    private lateinit var repository: AppRepository
+    private lateinit var listView: ListView
+    private lateinit var badge: TextView
+    private lateinit var search: EditText
+    private lateinit var adapter: EntryAdapter
 
-    companion object {
-        const val EXTRA_AUTO_SELECT_ID = "com.tvlauncher.EXTRA_AUTO_SELECT_ID"
-    }
-
-    private enum class FilterTab { ALL, SELECTED, SHORTCUTS }
-
-    private lateinit var appList: RecyclerView
-    private lateinit var doneButton: TextView
-    private lateinit var loadingProgress: ProgressBar
-    private lateinit var searchEdit: EditText
-    private lateinit var selectedCountBadge: TextView
-    private lateinit var chipAll: TextView
-    private lateinit var chipSelected: TextView
-    private lateinit var chipShortcuts: TextView
-    private lateinit var appManager: AppManager
-    private lateinit var appSelectionAdapter: AppSelectionAdapter
-    private lateinit var shortcutToggle: androidx.appcompat.widget.SwitchCompat
-
-    private var currentFilter = FilterTab.ALL
-    private val selectedApps = linkedSetOf<String>()
-    private var allLoadedApps = listOf<AppInfo>()
-    private var pendingAutoSelectId: String? = null
-    private val selectionIconSizePx: Int by lazy { (68 * resources.displayMetrics.density).toInt() }
-
-    private val refreshReceiver = object : android.content.BroadcastReceiver() {
-        override fun onReceive(context: android.content.Context?, intent: Intent?) {
-            if (intent?.action == LauncherBroadcast.ACTION_REFRESH_APP_SELECTION) {
-                reloadAppList(invalidateCache = true)
-            }
-        }
-    }
+    private val selected = LinkedHashSet<String>()
+    private var allEntries: List<AppEntry> = emptyList()
+    private var query: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_app_selection)
+        repository = AppRepository(this)
+        selected.addAll(repository.getSelectedIds())
 
-        appList = findViewById(R.id.appList)
-        doneButton = findViewById(R.id.doneButton)
-        loadingProgress = findViewById(R.id.loadingProgress)
-        searchEdit = findViewById(R.id.searchEdit)
-        selectedCountBadge = findViewById(R.id.selectedCountBadge)
-        chipAll = findViewById(R.id.chipAll)
-        chipSelected = findViewById(R.id.chipSelected)
-        chipShortcuts = findViewById(R.id.chipShortcuts)
-        shortcutToggle = findViewById(R.id.shortcutToggle)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(30), dp(22), dp(30), dp(22))
+            setBackgroundColor(Color.rgb(14, 14, 18))
+        }
 
-        appManager = AppManager(this)
-        selectedApps.addAll(appManager.getSelectedApps())
-        shortcutToggle.isChecked = appManager.isShortcutSupportEnabled()
-        pendingAutoSelectId = intent.getStringExtra(EXTRA_AUTO_SELECT_ID)?.let { AppIdentifier.normalize(it) }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
 
-        updateCountBadge()
-
-        val spanCount = calculateSpanCount()
-        appList.layoutManager = GridLayoutManager(this, spanCount)
-        appSelectionAdapter = AppSelectionAdapter(
-            selectedApps,
-            ::onSelectionChanged,
-            appManager,
-            selectionIconSizePx
+        val title = TextView(this).apply {
+            text = getString(R.string.select_apps)
+            setTextColor(Color.WHITE)
+            textSize = 26f
+        }
+        header.addView(
+            title,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         )
-        appList.adapter = appSelectionAdapter
-        appList.setItemViewCacheSize(5)
-        appList.recycledViewPool.setMaxRecycledViews(0, 5)
 
-        setupClickListeners()
-        setupSearch()
-        setupFilterChips()
-        reloadAppList(invalidateCache = false)
+        badge = TextView(this).apply {
+            setTextColor(Color.LTGRAY)
+            textSize = 16f
+            setPadding(dp(12), 0, dp(16), 0)
+        }
+        header.addView(badge)
 
-        ContextCompat.registerReceiver(
-            this,
-            refreshReceiver,
-            android.content.IntentFilter(LauncherBroadcast.ACTION_REFRESH_APP_SELECTION),
-            ContextCompat.RECEIVER_NOT_EXPORTED
+        val done = Button(this).apply {
+            text = getString(R.string.done)
+            isFocusable = true
+            setOnClickListener {
+                repository.saveSelectedIds(selected)
+                finish()
+            }
+        }
+        header.addView(done)
+
+        root.addView(
+            header,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
         )
-    }
 
-    private fun setupFilterChips() {
-        chipAll.setOnClickListener { setFilterTab(FilterTab.ALL) }
-        chipSelected.setOnClickListener { setFilterTab(FilterTab.SELECTED) }
-        chipShortcuts.setOnClickListener { setFilterTab(FilterTab.SHORTCUTS) }
-    }
-
-    private fun setFilterTab(tab: FilterTab) {
-        currentFilter = tab
-        chipAll.isSelected = tab == FilterTab.ALL
-        chipSelected.isSelected = tab == FilterTab.SELECTED
-        chipShortcuts.isSelected = tab == FilterTab.SHORTCUTS
-        filterApps(searchEdit.text.toString())
-    }
-
-    private fun updateCountBadge() {
-        selectedCountBadge.text = getString(R.string.selected_badge, selectedApps.size, AppManager.MAX_SLOTS)
-    }
-
-    private fun setupSearch() {
-        searchEdit.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
-                filterApps(s?.toString().orEmpty())
+        search = EditText(this).apply {
+            hint = getString(R.string.search_hint)
+            setSingleLine(true)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+        }
+        root.addView(
+            search,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                topMargin = dp(12)
+                bottomMargin = dp(10)
             }
-            override fun afterTextChanged(s: Editable?) {}
-        })
-    }
+        )
 
-    private fun filterApps(query: String) {
-        val trimmed = query.trim().lowercase()
-        val baseList = when (currentFilter) {
-            FilterTab.ALL -> allLoadedApps
-            FilterTab.SELECTED -> allLoadedApps.filter { app ->
-                val id = AppIdentifier.normalize(appManager.getAppIdentifier(app))
-                selectedApps.contains(id)
-            }
-            FilterTab.SHORTCUTS -> allLoadedApps.filter { it.isShortcut }
+        listView = ListView(this).apply {
+            dividerHeight = 0
+            isFocusable = true
         }
-
-        val filtered = if (trimmed.isEmpty()) {
-            baseList
-        } else {
-            baseList.filter { app ->
-                app.getDisplayName().lowercase().contains(trimmed) ||
-                    app.packageName.lowercase().contains(trimmed)
-            }
-        }
-        appSelectionAdapter.submitList(filtered)
-    }
-
-    private fun onSelectionChanged(appIdentifier: String, isSelected: Boolean) {
-        val normalized = AppIdentifier.normalize(appIdentifier)
-        if (isSelected) {
-            if (!appManager.canAddMoreSelections(selectedApps.size) && !selectedApps.contains(normalized)) {
-                Toast.makeText(
-                    this,
-                    getString(R.string.slot_limit_reached, AppManager.MAX_SLOTS),
-                    Toast.LENGTH_SHORT
-                ).show()
-                appSelectionAdapter.updateSelectionState()
-                return
-            }
-            selectedApps.add(normalized)
-        } else {
-            selectedApps.remove(normalized)
-            handleShortcutUnselect(normalized)
-        }
-        updateCountBadge()
-        if (currentFilter == FilterTab.SELECTED) {
-            filterApps(searchEdit.text.toString())
-        }
-    }
-
-    private fun reloadAppList(invalidateCache: Boolean) {
-        if (invalidateCache) {
-            appManager.invalidateAppListCache()
-        }
-        loadingProgress.visibility = View.VISIBLE
-        appList.visibility = View.INVISIBLE
-
-        appManager.loadInstalledAppsAsync(shortcutToggle.isChecked) { apps ->
-            if (isFinishing) {
-                return@loadInstalledAppsAsync
-            }
-            allLoadedApps = apps
-            loadingProgress.visibility = View.GONE
-            appList.visibility = View.VISIBLE
-            filterApps(searchEdit.text.toString())
-            applyAutoSelectIfNeeded()
-        }
-    }
-
-    private fun applyAutoSelectIfNeeded() {
-        val autoSelectId = pendingAutoSelectId ?: return
-        if (!appManager.isShortcutSupportEnabled()) {
-            pendingAutoSelectId = null
-            return
-        }
-        if (!selectedApps.contains(autoSelectId)) {
-            if (!appManager.canAddMoreSelections(selectedApps.size)) {
-                Toast.makeText(
-                    this,
-                    getString(R.string.slot_limit_reached, AppManager.MAX_SLOTS),
-                    Toast.LENGTH_LONG
-                ).show()
+        adapter = EntryAdapter()
+        listView.adapter = adapter
+        listView.setOnItemClickListener { _, _, position, _ ->
+            val entry = adapter.getItem(position)
+            if (selected.contains(entry.id)) {
+                selected.remove(entry.id)
             } else {
-                selectedApps.add(autoSelectId)
-                updateCountBadge()
-                appSelectionAdapter.updateSelectionState()
+                if (selected.size >= AppRepository.MAX_APPS) {
+                    Toast.makeText(
+                        this,
+                        getString(R.string.slot_limit_reached, AppRepository.MAX_APPS),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@setOnItemClickListener
+                }
+                selected.add(entry.id)
             }
+            updateBadge()
+            adapter.notifyDataSetChanged()
         }
-        pendingAutoSelectId = null
+
+        root.addView(
+            listView,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        )
+
+        setContentView(root)
+        updateBadge()
+
+        search.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(
+                s: CharSequence?,
+                start: Int,
+                count: Int,
+                after: Int
+            ) = Unit
+
+            override fun onTextChanged(
+                s: CharSequence?,
+                start: Int,
+                before: Int,
+                count: Int
+            ) {
+                query = s?.toString()?.trim()?.lowercase(Locale.ROOT).orEmpty()
+                applyFilter()
+            }
+
+            override fun afterTextChanged(s: Editable?) = Unit
+        })
+
+        Thread {
+            val loaded = repository.queryLaunchableApps()
+            runOnUiThread {
+                if (isFinishing) return@runOnUiThread
+                allEntries = loaded
+                applyFilter()
+                listView.requestFocus()
+            }
+        }.start()
     }
 
-    private fun handleShortcutUnselect(appIdentifier: String) {
-        if (!AppIdentifier.isShortcut(appIdentifier)) {
-            return
-        }
-        val decoded = AppIdentifier.decode(appIdentifier)
-        val shortcutId = decoded.shortcutId ?: return
-        appManager.unpinShortcut(decoded.packageName, shortcutId)
+    private fun updateBadge() {
+        badge.text = getString(
+            R.string.selected_badge,
+            selected.size,
+            AppRepository.MAX_APPS
+        )
     }
 
-    private fun setupClickListeners() {
-        doneButton.setOnClickListener {
-            appManager.saveSelectedApps(selectedApps.toList())
-            appManager.invalidateAppListCache()
-            LauncherBroadcast.refreshHome(this)
-            setResult(RESULT_OK)
-            finish()
-        }
-
-        shortcutToggle.setOnCheckedChangeListener { _, isChecked ->
-            appManager.setShortcutSupportEnabled(isChecked)
-            if (!isChecked) {
-                val toRemove = selectedApps.filter { AppIdentifier.isShortcut(it) }
-                selectedApps.removeAll(toRemove.toSet())
-                updateCountBadge()
+    private fun applyFilter() {
+        val filtered = if (query.isEmpty()) {
+            allEntries
+        } else {
+            allEntries.filter { entry ->
+                entry.label.lowercase(Locale.ROOT).contains(query) ||
+                    entry.packageName.lowercase(Locale.ROOT).contains(query) ||
+                    entry.activityName.lowercase(Locale.ROOT).contains(query)
             }
-            reloadAppList(invalidateCache = true)
-            LauncherBroadcast.refreshHome(this)
         }
+        adapter.items = filtered
+        adapter.notifyDataSetChanged()
     }
 
     override fun onDestroy() {
+        repository.clearIconCache()
         super.onDestroy()
-        try {
-            unregisterReceiver(refreshReceiver)
-        } catch (_: Exception) {
+    }
+
+    private inner class EntryAdapter : BaseAdapter() {
+        var items: List<AppEntry> = emptyList()
+
+        override fun getCount(): Int = items.size
+        override fun getItem(position: Int): AppEntry = items[position]
+        override fun getItemId(position: Int): Long = position.toLong()
+
+        override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+            val row: LinearLayout
+            val icon: ImageView
+            val labels: TextView
+            val mark: TextView
+
+            if (convertView is LinearLayout && convertView.tag is RowHolder) {
+                row = convertView
+                val holder = row.tag as RowHolder
+                icon = holder.icon
+                labels = holder.labels
+                mark = holder.mark
+            } else {
+                row = LinearLayout(this@AppSelectionActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(12), dp(8), dp(12), dp(8))
+                    minimumHeight = dp(72)
+                }
+
+                icon = ImageView(this@AppSelectionActivity)
+                row.addView(icon, LinearLayout.LayoutParams(dp(52), dp(52)))
+
+                labels = TextView(this@AppSelectionActivity).apply {
+                    setTextColor(Color.WHITE)
+                    textSize = 16f
+                    maxLines = 2
+                    setPadding(dp(14), 0, dp(10), 0)
+                }
+                row.addView(
+                    labels,
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                )
+
+                mark = TextView(this@AppSelectionActivity).apply {
+                    setTextColor(Color.WHITE)
+                    textSize = 24f
+                    gravity = Gravity.CENTER
+                }
+                row.addView(mark, LinearLayout.LayoutParams(dp(48), dp(48)))
+                row.tag = RowHolder(icon, labels, mark)
+            }
+
+            val entry = getItem(position)
+            icon.setImageDrawable(repository.loadRoundedIcon(entry, dp(52)))
+            val kind = if (entry.isTvApp) "TV" else "Mobile"
+            labels.text = entry.label + "\n" + kind + " · " + entry.packageName
+            mark.text = if (selected.contains(entry.id)) "✓" else ""
+
+            return row
         }
     }
 
-    private fun calculateSpanCount(): Int {
-        val displayMetrics = resources.displayMetrics
-        val screenWidthDp = displayMetrics.widthPixels / displayMetrics.density
-        val itemWidthDp = 180f
-        val spanCount = (screenWidthDp / itemWidthDp).toInt()
-        return spanCount.coerceIn(3, 6)
+    private data class RowHolder(
+        val icon: ImageView,
+        val labels: TextView,
+        val mark: TextView
+    )
+
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density + 0.5f).toInt()
     }
 }

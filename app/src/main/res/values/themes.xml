@@ -1,22 +1,9 @@
-<resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base application theme. -->
-    <style name="Theme.TVLauncher" parent="Theme.AppCompat.Light.NoActionBar">
+<resources>
+    <style name="Theme.GazelleLauncher" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/bg_main</item>
         <item name="android:colorBackground">@color/bg_main</item>
-        <item name="android:textColorPrimary">@color/text_primary</item>
-        <item name="android:textColorSecondary">@color/text_secondary</item>
-        <item name="colorAccent">@color/accent</item>
-    </style>
-
-    <style name="Theme.TVLauncher.AboutDialog" parent="Theme.AppCompat.Dialog.Alert">
-        <item name="android:windowBackground">@color/dialog_bg</item>
-        <item name="android:colorBackground">@color/dialog_bg</item>
-        <item name="android:textColor">@color/text_primary</item>
-        <item name="android:textColorPrimary">@color/text_primary</item>
-        <item name="android:textColorSecondary">@color/text_secondary</item>
-        <item name="android:textColorAlertDialogListItem">@color/text_primary</item>
-        <item name="colorAccent">@color/accent</item>
-        <item name="colorControlNormal">@color/text_secondary</item>
-        <item name="colorControlActivated">@color/accent</item>
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowNoTitle">true</item>
     </style>
 </resources>

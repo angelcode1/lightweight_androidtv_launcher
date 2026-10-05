@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission
-        android:name="android.permission.QUERY_ALL_PACKAGES"
-        tools:ignore="QueryAllPackagesPermission" />
+    <!-- Used only when a changing online wallpaper source is selected. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+
+    <!-- Local IPC for the Gazelle HA satellite. Both apps should use the same signing key. -->
+    <permission
+        android:name="com.gazelle.launcher.permission.CONTROL"
+        android:protectionLevel="signature" />
 
     <queries>
         <intent>
@@ -22,28 +22,24 @@
 
     <uses-feature
         android:name="android.software.leanback"
-        android:required="true" />
+        android:required="false" />
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
     <application
-        android:name=".TvLauncherApplication"
-        android:allowBackup="true"
-        android:dataExtractionRules="@xml/data_extraction_rules"
-        android:fullBackupContent="@xml/backup_rules"
+        android:allowBackup="false"
         android:banner="@drawable/app_banner"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.TVLauncher"
-        tools:targetApi="31">
+        android:theme="@style/Theme.GazelleLauncher"
+        android:usesCleartextTraffic="false">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
-            android:screenOrientation="landscape"
-            android:theme="@style/Theme.TVLauncher">
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -59,50 +55,19 @@
         <activity
             android:name=".AppSelectionActivity"
             android:exported="false"
-            android:screenOrientation="landscape"
-            android:theme="@style/Theme.TVLauncher" />
+            android:screenOrientation="landscape" />
 
-        <activity
-            android:name=".UpdatePromptActivity"
-            android:exported="false"
-            android:excludeFromRecents="true"
-            android:screenOrientation="landscape"
-            android:theme="@style/Theme.TVLauncher" />
-
-        <service
-            android:name=".TvHomeOverrideService"
+        <receiver
+            android:name=".ControlReceiver"
             android:exported="true"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            android:permission="com.gazelle.launcher.permission.CONTROL">
             <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
+                <action android:name="com.gazelle.launcher.action.HOME" />
+                <action android:name="com.gazelle.launcher.action.LAUNCH" />
+                <action android:name="com.gazelle.launcher.action.WALLPAPER_REFRESH" />
+                <action android:name="com.gazelle.launcher.action.WALLPAPER_SET_SOURCE" />
             </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
-
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
-
-        <activity
-            android:name=".PinShortcutActivity"
-            android:exported="true"
-            android:launchMode="singleTop"
-            android:screenOrientation="landscape"
-            android:theme="@style/Theme.TVLauncher"
-            android:excludeFromRecents="true">
-            <intent-filter>
-                <action android:name="android.content.pm.action.CONFIRM_PIN_SHORTCUT" />
-                <category android:name="android.intent.category.DEFAULT" />
-            </intent-filter>
-        </activity>
+        </receiver>
 
     </application>
 
