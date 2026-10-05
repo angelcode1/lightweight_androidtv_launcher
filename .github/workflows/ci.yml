@@ -52,8 +52,19 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew assembleDebug --no-daemon
 
+      - name: Assemble unsigned release APK
+        run: ./gradlew assembleRelease --no-daemon
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: gazelle-launcher-debug
           path: app/build/outputs/apk/debug/app-debug.apk
+
+
+      - name: Upload unsigned release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: gazelle-launcher-release-unsigned
+          path: app/build/outputs/apk/release/app-release-unsigned.apk
+          if-no-files-found: error
