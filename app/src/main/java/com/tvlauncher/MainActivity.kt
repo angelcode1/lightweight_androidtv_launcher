@@ -176,6 +176,17 @@ class MainActivity : Activity() {
             )
         )
 
+        val homeScrim = View(this).apply {
+            setBackgroundResource(R.drawable.home_scrim)
+        }
+        root.addView(
+            homeScrim,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
         wallpaperDim = View(this).apply {
             setBackgroundColor(0x88000000.toInt())
             visibility = View.GONE
@@ -210,7 +221,7 @@ class MainActivity : Activity() {
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(34), dp(22), dp(34), dp(22))
+            setPadding(dp(42), dp(24), dp(42), dp(24))
         }
         root.addView(
             content,
@@ -229,7 +240,7 @@ class MainActivity : Activity() {
             useDefaultMargins = false
             clipChildren = false
             clipToPadding = false
-            setPadding(0, dp(10), 0, 0)
+            setPadding(0, dp(18), 0, 0)
         }
         content.addView(
             appGrid,
@@ -258,7 +269,7 @@ class MainActivity : Activity() {
                 format12Hour = "h:mm a"
                 format24Hour = "HH:mm"
                 setTextColor(Color.WHITE)
-                textSize = 26f
+                textSize = 24f
             }
         )
 
@@ -266,8 +277,8 @@ class MainActivity : Activity() {
             TextClock(this).apply {
                 format12Hour = "EEEE, MMMM d"
                 format24Hour = "EEEE, d MMMM"
-                setTextColor(Color.LTGRAY)
-                textSize = 13f
+                setTextColor(0xCCFFFFFF.toInt())
+                textSize = 12f
             }
         )
 
@@ -281,12 +292,21 @@ class MainActivity : Activity() {
             setBackgroundResource(R.drawable.header_button_background)
             contentDescription = getString(R.string.wallpaper_settings)
             isFocusable = true
+            alpha = 0.78f
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            setOnFocusChangeListener { view, focused ->
+                view.alpha = if (focused) 1f else 0.78f
+                val scale = if (focused) 1.06f else 1f
+                view.scaleX = scale
+                view.scaleY = scale
+                view.elevation = if (focused) dp(5).toFloat() else 0f
+            }
             setOnClickListener { showWallpaperSettings() }
         }
         header.addView(
             wallpaperButton,
-            LinearLayout.LayoutParams(dp(46), dp(46)).apply {
-                marginEnd = dp(12)
+            LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+                marginEnd = dp(10)
             }
         )
 
@@ -295,11 +315,20 @@ class MainActivity : Activity() {
             setBackgroundResource(R.drawable.header_button_background)
             contentDescription = getString(R.string.settings)
             isFocusable = true
+            alpha = 0.78f
+            setPadding(dp(9), dp(9), dp(9), dp(9))
+            setOnFocusChangeListener { view, focused ->
+                view.alpha = if (focused) 1f else 0.78f
+                val scale = if (focused) 1.06f else 1f
+                view.scaleX = scale
+                view.scaleY = scale
+                view.elevation = if (focused) dp(5).toFloat() else 0f
+            }
             setOnClickListener { showSystemSettingsMenu() }
         }
         header.addView(
             settingsButton,
-            LinearLayout.LayoutParams(dp(46), dp(46))
+            LinearLayout.LayoutParams(dp(42), dp(42))
         )
 
         return header
@@ -371,10 +400,12 @@ class MainActivity : Activity() {
         val label = TextView(this).apply {
             text = entry.label
             setTextColor(Color.WHITE)
-            textSize = 14f
+            textSize = 13f
             gravity = Gravity.CENTER
             maxLines = 2
-            setPadding(dp(6), dp(7), dp(6), 0)
+            alpha = 0.92f
+            setShadowLayer(2f, 0f, 1f, 0x99000000.toInt())
+            setPadding(dp(4), dp(5), dp(4), 0)
         }
         tile.addView(
             label,
@@ -401,25 +432,25 @@ class MainActivity : Activity() {
     }
 
     private fun createAddTile(position: Int): View {
-        val tile = baseTile()
+        val tile = baseTile(secondary = true)
         val plus = TextView(this).apply {
             text = "+"
-            setTextColor(Color.WHITE)
-            textSize = 46f
+            setTextColor(0xBFFFFFFF.toInt())
+            textSize = 34f
             gravity = Gravity.CENTER
         }
         tile.addView(
             plus,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(60)
+                dp(46)
             )
         )
 
         val label = TextView(this).apply {
             text = getString(R.string.add_app)
-            setTextColor(Color.LTGRAY)
-            textSize = 14f
+            setTextColor(0xAFFFFFFF.toInt())
+            textSize = 12.5f
             gravity = Gravity.CENTER
         }
         tile.addView(
@@ -437,43 +468,45 @@ class MainActivity : Activity() {
         return tile
     }
 
-    private fun baseTile(): LinearLayout {
+    private fun baseTile(secondary: Boolean = false): LinearLayout {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             isFocusable = true
             isClickable = true
-            setPadding(dp(8), dp(10), dp(8), dp(8))
+            alpha = if (secondary) 0.72f else 1f
+            setPadding(dp(6), dp(8), dp(6), dp(6))
             setBackgroundResource(R.drawable.app_slot_background)
 
             setOnFocusChangeListener { view, focused ->
-                val scale = if (focused) 1.05f else 1.0f
+                val scale = if (focused) 1.055f else 1f
                 view.scaleX = scale
                 view.scaleY = scale
-                view.elevation = if (focused) dp(8).toFloat() else 0f
+                view.alpha = if (focused) 1f else if (secondary) 0.72f else 1f
+                view.elevation = if (focused) dp(6).toFloat() else 0f
             }
         }
     }
 
     private fun calculateTileWidthPx(): Int {
-        val usableWidth = resources.displayMetrics.widthPixels - dp(68)
-        return ((usableWidth / COLUMNS) - dp(12)).coerceAtLeast(1)
+        val usableWidth = resources.displayMetrics.widthPixels - dp(84)
+        return ((usableWidth / COLUMNS) - dp(14)).coerceAtLeast(1)
     }
 
     private fun calculateIconSizePx(): Int {
-        val contentWidth = calculateTileWidthPx() - dp(16)
-        return minOf(dp(68), contentWidth.coerceAtLeast(dp(36)))
+        val contentWidth = calculateTileWidthPx() - dp(14)
+        return minOf(dp(54), contentWidth.coerceAtLeast(dp(34)))
     }
 
     private fun tileLayoutParams(): GridLayout.LayoutParams {
         val tileWidth = calculateTileWidthPx()
-        val usableHeight = resources.displayMetrics.heightPixels - dp(128)
-        val tileHeight = (usableHeight / ROWS) - dp(12)
+        val usableHeight = resources.displayMetrics.heightPixels - dp(150)
+        val adaptiveHeight = (usableHeight / ROWS) - dp(14)
 
         return GridLayout.LayoutParams().apply {
             width = tileWidth
-            height = tileHeight.coerceAtLeast(1).coerceAtMost(dp(180))
-            setMargins(dp(6), dp(6), dp(6), dp(6))
+            height = adaptiveHeight.coerceAtLeast(1).coerceAtMost(dp(116))
+            setMargins(dp(7), dp(7), dp(7), dp(7))
         }
     }
 
