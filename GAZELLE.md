@@ -13,13 +13,14 @@ Fire TV Cube 3 (AFTGAZL / gazelle) optimized branch.
 - Stores explicit component names, with direct package fallback if an app update renames the activity.
 - Uses a responsive 6 x 3 Home grid: up to 17 apps plus the Add tile.
 - Keeps the small icon cache warm across ordinary app launches while releasing the large wallpaper bitmap when HOME stops.
+- Retains the existing HOME view hierarchy across app launches; package reconciliation/icon loading and wallpaper decode run off the UI thread on resume.
 - Keeps changing wallpapers without a resident process; HA-triggered wallpaper work is handed to a short-lived JobService.
 
 ## Build
 
-    ./gradlew clean test lint assembleDebug
+    ./gradlew clean test lint assembleDebug assembleRelease
 
-Release builds are unsigned unless all four signing variables are provided:
+CI assembles both debug and unsigned release APKs so AAPT/lint plus release R8/shrinkResources are exercised. Release builds are unsigned unless all four signing variables are provided:
 
     SIGNING_STORE_FILE
     SIGNING_STORE_PASSWORD
@@ -187,7 +188,9 @@ No Cube-specific RAM or CPU claim is made yet. Measure the upstream launcher, Ga
 
 At commit af4fb8e, all Kotlin source files compiled against android-34.jar using a stub R, all R references resolved, and the five pure unit tests passed under a minimal JUnit shim. AAPT, lint, R8 and on-device behavior remained unverified.
 
-Subsequent fixes changed sampling, pinned-app repair, wallpaper source-race handling, HOME lifecycle behavior, and added the Amazon Collection provider/caption UI. Those changes require the same compile/test pass again before the branch should be treated as build-verified.
+Subsequent fixes changed sampling, pinned-app repair, wallpaper source-race handling, HOME lifecycle behavior, added the Amazon Collection provider/caption UI, and moved HOME app/icon plus wallpaper decode work off the main thread. Those changes require the same compile/test pass again before the branch should be treated as build-verified.
+
+The CI workflow now runs `assembleRelease` as an unsigned release build specifically to exercise R8 and `shrinkResources`. There is still no automated signed-release publication workflow.
 
 Cube debloat compatibility notes are in `docs/cube3-debloat-policy.md`; the stock screensaver/local-gallery packages are intentionally kept separate from Gazelle's HOME wallpaper provider.
 
@@ -197,3 +200,16 @@ Current pure tests cover:
 - centre-crop-safe power-of-two sample-size calculation;
 - 1-hour interval index preservation;
 - disabled-id preservation, uninstalled-id pruning and component repair.
+
+
+## HOME latency design
+
+`MainActivity` no longer calls `getSelectedEntries()`, `loadIcon()`, rounded-icon rendering, or wallpaper `BitmapFactory.decodeFile()` synchronously from `onResume()`.
+
+On return from an app, the existing grid remains in the view hierarchy for the first frame. A background load then reconciles pinned apps and prepares icon drawables; a separate background load decodes the cached wallpaper. Generation counters prevent stale background results from applying after HOME stops or a newer refresh supersedes them.
+
+The wallpaper bitmap is still released in `onStop()` to retain the intended RAM saving, so device benchmarking should measure both PSS/USS and HOME time-to-first-frame / time-to-wallpaper after returning from Kodi.
+
+BACK is swallowed only when `MainActivity` was invoked with the HOME category; a normal launcher/activity invocation can use BACK normally.
+
+HA wallpaper jobs are scheduled for immediate execution without a contradictory network constraint + immediate deadline pair. Network success/failure is handled by the launcher's bounded HTTP timeouts.
