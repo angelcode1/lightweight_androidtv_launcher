@@ -346,10 +346,10 @@ class MainActivity : Activity() {
             setPadding(dp(9), dp(9), dp(9), dp(9))
             setOnFocusChangeListener { view, focused ->
                 view.alpha = if (focused) 1f else 0.78f
-                val scale = if (focused) 1.06f else 1f
+                val scale = if (focused) 1.03f else 1f
                 view.scaleX = scale
                 view.scaleY = scale
-                view.elevation = if (focused) dp(5).toFloat() else 0f
+                view.elevation = if (focused) dp(3).toFloat() else 0f
             }
             setOnClickListener { showSystemSettingsMenu() }
         }
