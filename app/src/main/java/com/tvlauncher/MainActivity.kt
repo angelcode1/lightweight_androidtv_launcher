@@ -3,6 +3,7 @@ package com.tvlauncher
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.ComponentCallbacks2
 import android.content.Context
 import android.content.Intent
@@ -294,7 +295,7 @@ class MainActivity : Activity() {
             setBackgroundResource(R.drawable.header_button_background)
             contentDescription = getString(R.string.settings)
             isFocusable = true
-            setOnClickListener { openSystemSettings() }
+            setOnClickListener { showSystemSettingsMenu() }
         }
         header.addView(
             settingsButton,
@@ -540,10 +541,118 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun openSystemSettings() {
+    private fun showSystemSettingsMenu() {
+        val labels = arrayOf(
+            getString(R.string.settings_all),
+            getString(R.string.settings_network),
+            getString(R.string.settings_display_sounds),
+            getString(R.string.settings_applications),
+            getString(R.string.settings_controllers),
+            getString(R.string.settings_preferences),
+            getString(R.string.settings_device),
+            getString(R.string.settings_accessibility)
+        )
+
+        val actions = arrayOf<() -> Unit>(
+            { openFireTvSettingsHome() },
+            {
+                openSettingsComponent(
+                    "com.amazon.tv.settings",
+                    "com.amazon.tv.settings.tv.network.NetworkActivity"
+                )
+            },
+            {
+                openSettingsComponent(
+                    "com.amazon.tv.settings",
+                    "com.amazon.tv.settings.tv.display_sounds.DisplayAndSoundsActivity"
+                )
+            },
+            {
+                openSettingsComponent(
+                    "com.amazon.tv.settings",
+                    "com.amazon.tv.settings.tv.applications.ApplicationsActivity"
+                )
+            },
+            {
+                openSettingsComponent(
+                    "com.amazon.tv.settings",
+                    "com.amazon.tv.settings.tv.controllers_bluetooth_devices.ControllersAndBluetoothActivity"
+                )
+            },
+            {
+                openSettingsComponent(
+                    "com.amazon.tv.settings",
+                    "com.amazon.tv.settings.tv.preferences.PreferencesActivity"
+                )
+            },
+            {
+                openSettingsComponent(
+                    "com.amazon.tv.settings",
+                    "com.amazon.tv.settings.tv.device.DeviceActivity"
+                )
+            },
+            {
+                openSettingsComponent(
+                    "com.amazon.tv.settings",
+                    "com.amazon.tv.settings.tv.accessibility.AccessibilityActivity"
+                )
+            }
+        )
+
+        AlertDialog.Builder(this)
+            .setTitle(R.string.settings)
+            .setItems(labels) { _, which ->
+                actions.getOrNull(which)?.invoke()
+            }
+            .setNegativeButton(R.string.cancel, null)
+            .show()
+    }
+
+    private fun openSettingsComponent(packageName: String, className: String) {
+        val intent = Intent(Intent.ACTION_MAIN).apply {
+            component = ComponentName(packageName, className)
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        }
+
+        try {
+            startActivity(intent)
+        } catch (_: Exception) {
+            openGenericSystemSettings()
+        }
+    }
+
+    private fun openFireTvSettingsHome() {
+        val components = listOf(
+            ComponentName(
+                "com.amazon.tv.launcher",
+                "com.amazon.tv.launcher.ui.MainSettingsActivity"
+            ),
+            ComponentName(
+                "com.amazon.tv.launcher",
+                "com.amazon.tv.launcher.ui.SettingsActivity"
+            )
+        )
+
+        components.forEach { component ->
+            try {
+                startActivity(
+                    Intent(Intent.ACTION_MAIN).apply {
+                        this.component = component
+                        addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                    }
+                )
+                return
+            } catch (_: Exception) {
+            }
+        }
+
+        openGenericSystemSettings()
+    }
+
+    private fun openGenericSystemSettings() {
         val intents = listOf(
-            Intent(Settings.ACTION_SETTINGS),
             Intent("android.settings.TV_SETTINGS"),
+            Intent(Settings.ACTION_SETTINGS),
             Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)
         )
 
@@ -554,6 +663,12 @@ class MainActivity : Activity() {
             } catch (_: Exception) {
             }
         }
+
+        Toast.makeText(
+            this,
+            R.string.settings_open_failed,
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun showWallpaperSettings() {
