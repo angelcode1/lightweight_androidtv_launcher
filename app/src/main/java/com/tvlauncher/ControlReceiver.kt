@@ -86,7 +86,7 @@ class ControlReceiver : BroadcastReceiver() {
                     context.sendBroadcast(
                         Intent(ACTION_WALLPAPER_CHANGED).setPackage(context.packageName)
                     )
-                    setOrderedResult(true, "completed")
+                    setOrderedResult(true, "accepted")
                     sendFinalResult(
                         context,
                         requestId,
@@ -206,6 +206,7 @@ class ControlReceiver : BroadcastReceiver() {
     private fun isValidSource(source: String): Boolean {
         return source == NatureWallpaperManager.SOURCE_SOLID ||
             source == NatureWallpaperManager.SOURCE_BING ||
+            source == NatureWallpaperManager.SOURCE_AMAZON ||
             source == NatureWallpaperManager.SOURCE_NATURE ||
             source == NatureWallpaperManager.SOURCE_CUSTOM
     }
