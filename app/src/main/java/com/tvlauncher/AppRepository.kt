@@ -79,7 +79,11 @@ class AppRepository(private val context: Context) {
         }
     }
 
-    fun getSelectedIds(): List<String> {
+    fun getSelectedIds(): List<String> = synchronized(selectionLock) {
+        getSelectedIdsUnlocked()
+    }
+
+    private fun getSelectedIdsUnlocked(): List<String> {
         val encoded = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(PREF_ORDER, null)
             .orEmpty()
@@ -91,7 +95,11 @@ class AppRepository(private val context: Context) {
             .take(MAX_APPS)
     }
 
-    fun saveSelectedIds(ids: Collection<String>) {
+    fun saveSelectedIds(ids: Collection<String>) = synchronized(selectionLock) {
+        saveSelectedIdsUnlocked(ids)
+    }
+
+    private fun saveSelectedIdsUnlocked(ids: Collection<String>) {
         val normalized = LinkedHashSet<String>()
         ids.forEach { id ->
             if (id.isNotBlank() && normalized.size < MAX_APPS) {
@@ -140,7 +148,11 @@ class AppRepository(private val context: Context) {
 
         val reconciled = GazelleLogic.reconcileStoredIds(savedIds, replacements)
         if (reconciled != savedIds) {
-            saveSelectedIds(reconciled)
+            synchronized(selectionLock) {
+                if (getSelectedIdsUnlocked() == savedIds) {
+                    saveSelectedIdsUnlocked(reconciled)
+                }
+            }
         }
         return result
     }
@@ -230,21 +242,26 @@ class AppRepository(private val context: Context) {
         )
     }
 
-    fun swapSelected(firstId: String, secondId: String): Boolean {
-        val current = getSelectedIds().toMutableList()
-        val first = current.indexOf(firstId)
-        val second = current.indexOf(secondId)
-        if (first < 0 || second < 0 || first == second) return false
+    fun swapSelected(firstId: String, secondId: String): Boolean =
+        synchronized(selectionLock) {
+            val current = getSelectedIdsUnlocked().toMutableList()
+            val first = current.indexOf(firstId)
+            val second = current.indexOf(secondId)
+            if (first < 0 || second < 0 || first == second) {
+                return@synchronized false
+            }
 
-        val tmp = current[first]
-        current[first] = current[second]
-        current[second] = tmp
-        saveSelectedIds(current)
-        return true
-    }
+            val tmp = current[first]
+            current[first] = current[second]
+            current[second] = tmp
+            saveSelectedIdsUnlocked(current)
+            true
+        }
 
-    fun removeSelected(id: String) {
-        saveSelectedIds(getSelectedIds().filterNot { it == id })
+    fun removeSelected(id: String) = synchronized(selectionLock) {
+        saveSelectedIdsUnlocked(
+            getSelectedIdsUnlocked().filterNot { it == id }
+        )
     }
 
     fun launch(entry: AppEntry): Boolean {
@@ -338,5 +355,6 @@ class AppRepository(private val context: Context) {
         private const val PREFS_NAME = "gazelle_home"
         private const val PREF_ORDER = "components"
         private const val ORDER_DELIMITER = "\u001E"
+        private val selectionLock = Any()
     }
 }
