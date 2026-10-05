@@ -653,7 +653,7 @@ object NatureWallpaperManager {
                     return null
                 }
 
-                if (total < 1024L || !isValidImage(temp)) {
+                if (total < 1024L || !isValidImage(downloadTemp)) {
                     downloadTemp.delete()
                     return null
                 }
