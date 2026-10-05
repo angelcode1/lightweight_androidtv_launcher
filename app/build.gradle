@@ -17,8 +17,8 @@ android {
         applicationId "com.gazelle.launcher"
         minSdk 21
         targetSdk 34
-        versionCode 10610
-        versionName "1.6.1-gazelle.9"
+        versionCode 10611
+        versionName "1.6.1-gazelle.10"
     }
 
     signingConfigs {
