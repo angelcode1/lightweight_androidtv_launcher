@@ -644,7 +644,8 @@ class MainActivity : Activity() {
             when (result) {
                 NatureWallpaperManager.RefreshResult.SUCCESS ->
                     applyWallpaperFromCache()
-                NatureWallpaperManager.RefreshResult.BUSY -> Unit
+                NatureWallpaperManager.RefreshResult.BUSY,
+                NatureWallpaperManager.RefreshResult.STALE -> Unit
                 NatureWallpaperManager.RefreshResult.FAILED -> {
                     if (force) {
                         Toast.makeText(
@@ -690,6 +691,11 @@ class MainActivity : Activity() {
         if (NatureWallpaperManager.isCaptionEnabled(this) && caption.isNotBlank()) {
             wallpaperCaption.text = caption
             wallpaperCaption.visibility = View.VISIBLE
+            wallpaperCaption.postDelayed({
+                if (wallpaperCaption.text == caption) {
+                    wallpaperCaption.visibility = View.GONE
+                }
+            }, 8000L)
         } else {
             wallpaperCaption.text = ""
             wallpaperCaption.visibility = View.GONE
