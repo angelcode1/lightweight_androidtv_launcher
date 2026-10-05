@@ -12,10 +12,13 @@ concurrency:
 
 jobs:
   release:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -33,27 +36,6 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Require permanent signing secrets
-        env:
-          KEYSTORE_B64: ${{ secrets.GAZELLE_SIGNING_KEYSTORE_B64 }}
-          STORE_PASSWORD: ${{ secrets.GAZELLE_SIGNING_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.GAZELLE_SIGNING_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.GAZELLE_SIGNING_KEY_PASSWORD }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$KEYSTORE_B64" || { echo 'Missing GAZELLE_SIGNING_KEYSTORE_B64'; exit 1; }
-          test -n "$STORE_PASSWORD" || { echo 'Missing GAZELLE_SIGNING_STORE_PASSWORD'; exit 1; }
-          test -n "$KEY_ALIAS" || { echo 'Missing GAZELLE_SIGNING_KEY_ALIAS'; exit 1; }
-          test -n "$KEY_PASSWORD" || { echo 'Missing GAZELLE_SIGNING_KEY_PASSWORD'; exit 1; }
-          KEYSTORE="$RUNNER_TEMP/gazelle-release.jks"
-          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
-          chmod 600 "$KEYSTORE"
-          echo "SIGNING_STORE_FILE=$KEYSTORE" >> "$GITHUB_ENV"
-          echo "SIGNING_STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
-          echo "SIGNING_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
-          echo "SIGNING_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
-
       - name: Read version
         id: version
         shell: bash
@@ -67,28 +49,55 @@ jobs:
           echo "code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
           echo "tag=v$VERSION_NAME" >> "$GITHUB_OUTPUT"
 
+      - name: Refuse version/tag reuse
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists. Bump versionName/versionCode before releasing."
+            exit 1
+          fi
+
       - name: Run tests and lint
         run: ./gradlew test lint --no-daemon
 
-      - name: Build permanently signed release APK
-        run: ./gradlew assembleRelease --no-daemon
+      - name: Prepare permanent signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.GAZELLE_SIGNING_KEYSTORE_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_B64" || { echo 'Missing GAZELLE_SIGNING_KEYSTORE_B64'; exit 1; }
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/gazelle-release.jks"
+          chmod 600 "$RUNNER_TEMP/gazelle-release.jks"
 
-      - name: Verify signed APK exists
+      - name: Build permanently signed release APK
+        env:
+          SIGNING_STORE_FILE: ${{ runner.temp }}/gazelle-release.jks
+          SIGNING_STORE_PASSWORD: ${{ secrets.GAZELLE_SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.GAZELLE_SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.GAZELLE_SIGNING_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$SIGNING_STORE_PASSWORD" || { echo 'Missing GAZELLE_SIGNING_STORE_PASSWORD'; exit 1; }
+          test -n "$SIGNING_KEY_ALIAS" || { echo 'Missing GAZELLE_SIGNING_KEY_ALIAS'; exit 1; }
+          test -n "$SIGNING_KEY_PASSWORD" || { echo 'Missing GAZELLE_SIGNING_KEY_PASSWORD'; exit 1; }
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Verify signature and stage release assets
         shell: bash
         run: |
           set -euo pipefail
           APK=app/build/outputs/apk/release/app-release.apk
           test -f "$APK"
           test ! -f app/build/outputs/apk/release/app-release-unsigned.apk
-
-      - name: Stage release assets
-        shell: bash
-        run: |
-          set -euo pipefail
           mkdir -p dist
           VERSION="${{ steps.version.outputs.name }}"
-          cp app/build/outputs/apk/release/app-release.apk \
-            "dist/gazelle-launcher-${VERSION}-release-signed.apk"
+          apksigner verify --verbose --print-certs "$APK" | tee dist/APK-CERTIFICATE.txt
+          cp "$APK" "dist/gazelle-launcher-${VERSION}-release-signed.apk"
           (cd dist && sha256sum *.apk > SHA256SUMS.txt)
 
       - name: Upload workflow artifact
@@ -98,7 +107,7 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-      - name: Create signed GitHub prerelease
+      - name: Create immutable signed GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
@@ -112,15 +121,11 @@ jobs:
 
           Version code: $VERSION_CODE
 
-          This APK is signed with the permanent Gazelle release key.
-          Future releases using the same GitHub signing secrets can update it in place.
+          The APK is signed with the permanent Gazelle release key.
+          Release tags and assets are immutable: bump versionName/versionCode for every new release.
           EOF
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
-          else
-            gh release create "$TAG" dist/* \
-              --target "$GITHUB_SHA" \
-              --title "Gazelle Launcher $VERSION" \
-              --prerelease \
-              --notes-file release-notes.md
-          fi
+          gh release create "$TAG" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "Gazelle Launcher $VERSION" \
+            --prerelease \
+            --notes-file release-notes.md
