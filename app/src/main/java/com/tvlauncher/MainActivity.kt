@@ -22,7 +22,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.GridLayout
+import android.widget.HorizontalScrollView
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -32,7 +32,8 @@ import android.widget.Toast
 
 class MainActivity : Activity() {
     private lateinit var repository: AppRepository
-    private lateinit var appGrid: GridLayout
+    private lateinit var appScroller: HorizontalScrollView
+    private lateinit var appRow: LinearLayout
     private lateinit var wallpaperImage: ImageView
     private lateinit var wallpaperDim: View
     private lateinit var wallpaperCaption: TextView
@@ -117,7 +118,7 @@ class MainActivity : Activity() {
             keyCode == KeyEvent.KEYCODE_BACK &&
             intent?.hasCategory(Intent.CATEGORY_HOME) == true
         ) {
-            appGrid.getChildAt(0)?.requestFocus()
+            appRow.getChildAt(0)?.requestFocus()
             return true
         }
         return super.onKeyDown(keyCode, event)
@@ -215,7 +216,7 @@ class MainActivity : Activity() {
                 Gravity.START or Gravity.BOTTOM
             ).apply {
                 leftMargin = dp(28)
-                bottomMargin = dp(24)
+                bottomMargin = dp(172)
             }
         )
 
@@ -233,21 +234,43 @@ class MainActivity : Activity() {
 
         content.addView(buildHeader())
 
-        appGrid = GridLayout(this).apply {
-            columnCount = COLUMNS
-            rowCount = ROWS
-            alignmentMode = GridLayout.ALIGN_BOUNDS
-            useDefaultMargins = false
-            clipChildren = false
-            clipToPadding = false
-            setPadding(0, dp(18), 0, 0)
-        }
         content.addView(
-            appGrid,
+            View(this),
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 0,
                 1f
+            )
+        )
+
+        appRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(8), dp(8), dp(18), dp(8))
+        }
+
+        appScroller = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            isFocusable = false
+            clipChildren = false
+            clipToPadding = false
+            addView(
+                appRow,
+                HorizontalScrollView.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+
+        content.addView(
+            appScroller,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(132)
             )
         )
 
@@ -355,7 +378,7 @@ class MainActivity : Activity() {
                 ) {
                     return@runOnUiThread
                 }
-                populateGrid(tiles)
+                populateRow(tiles)
             }
         }.apply {
             name = "gazelle-home-load"
@@ -363,23 +386,23 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun populateGrid(tiles: List<HomeTile>) {
-        appGrid.removeAllViews()
+    private fun populateRow(tiles: List<HomeTile>) {
+        appRow.removeAllViews()
         visibleEntries = tiles.map { it.entry }
 
         tiles.forEachIndexed { index, tile ->
-            appGrid.addView(
+            appRow.addView(
                 createAppTile(tile.entry, tile.icon, index),
                 tileLayoutParams()
             )
         }
 
-        appGrid.addView(createAddTile(tiles.size), tileLayoutParams())
+        appRow.addView(createAddTile(tiles.size), tileLayoutParams())
 
-        appGrid.post {
+        appRow.post {
             val target = lastFocusedPosition
-                .coerceIn(0, (appGrid.childCount - 1).coerceAtLeast(0))
-            appGrid.getChildAt(target)?.requestFocus()
+                .coerceIn(0, (appRow.childCount - 1).coerceAtLeast(0))
+            appRow.getChildAt(target)?.requestFocus()
         }
     }
 
@@ -479,34 +502,41 @@ class MainActivity : Activity() {
             setBackgroundResource(R.drawable.app_slot_background)
 
             setOnFocusChangeListener { view, focused ->
-                val scale = if (focused) 1.055f else 1f
+                val scale = if (focused) 1.08f else 1f
                 view.scaleX = scale
                 view.scaleY = scale
                 view.alpha = if (focused) 1f else if (secondary) 0.72f else 1f
-                view.elevation = if (focused) dp(6).toFloat() else 0f
+                view.elevation = if (focused) dp(8).toFloat() else 0f
+
+                if (focused && ::appScroller.isInitialized) {
+                    appScroller.post {
+                        appScroller.smoothScrollTo(
+                            (view.left - dp(42)).coerceAtLeast(0),
+                            0
+                        )
+                    }
+                }
             }
         }
     }
 
     private fun calculateTileWidthPx(): Int {
         val usableWidth = resources.displayMetrics.widthPixels - dp(84)
-        return ((usableWidth / COLUMNS) - dp(14)).coerceAtLeast(1)
+        val target = (usableWidth / CAROUSEL_VISIBLE_ITEMS) - dp(12)
+        return target.coerceIn(dp(96), dp(132))
     }
 
     private fun calculateIconSizePx(): Int {
         val contentWidth = calculateTileWidthPx() - dp(14)
-        return minOf(dp(54), contentWidth.coerceAtLeast(dp(34)))
+        return minOf(dp(52), contentWidth.coerceAtLeast(dp(34)))
     }
 
-    private fun tileLayoutParams(): GridLayout.LayoutParams {
-        val tileWidth = calculateTileWidthPx()
-        val usableHeight = resources.displayMetrics.heightPixels - dp(150)
-        val adaptiveHeight = (usableHeight / ROWS) - dp(14)
-
-        return GridLayout.LayoutParams().apply {
-            width = tileWidth
-            height = adaptiveHeight.coerceAtLeast(1).coerceAtMost(dp(116))
-            setMargins(dp(7), dp(7), dp(7), dp(7))
+    private fun tileLayoutParams(): LinearLayout.LayoutParams {
+        return LinearLayout.LayoutParams(
+            calculateTileWidthPx(),
+            dp(108)
+        ).apply {
+            setMargins(dp(6), dp(6), dp(6), dp(6))
         }
     }
 
@@ -576,7 +606,6 @@ class MainActivity : Activity() {
 
     private fun showSystemSettingsMenu() {
         val labels = arrayOf(
-            getString(R.string.settings_all),
             getString(R.string.settings_network),
             getString(R.string.settings_display_sounds),
             getString(R.string.settings_applications),
@@ -586,87 +615,36 @@ class MainActivity : Activity() {
             getString(R.string.settings_accessibility)
         )
 
-        val actions = arrayOf<() -> Unit>(
-            { openFireTvSettingsHome() },
-            {
-                openSettingsComponent(
-                    "com.amazon.tv.settings",
-                    "com.amazon.tv.settings.tv.network.NetworkActivity"
-                )
-            },
-            {
-                openSettingsComponent(
-                    "com.amazon.tv.settings",
-                    "com.amazon.tv.settings.tv.display_sounds.DisplayAndSoundsActivity"
-                )
-            },
-            {
-                openSettingsComponent(
-                    "com.amazon.tv.settings",
-                    "com.amazon.tv.settings.tv.applications.ApplicationsActivity"
-                )
-            },
-            {
-                openSettingsComponent(
-                    "com.amazon.tv.settings",
-                    "com.amazon.tv.settings.tv.controllers_bluetooth_devices.ControllersAndBluetoothActivity"
-                )
-            },
-            {
-                openSettingsComponent(
-                    "com.amazon.tv.settings",
-                    "com.amazon.tv.settings.tv.preferences.PreferencesActivity"
-                )
-            },
-            {
-                openSettingsComponent(
-                    "com.amazon.tv.settings",
-                    "com.amazon.tv.settings.tv.device.DeviceActivity"
-                )
-            },
-            {
-                openSettingsComponent(
-                    "com.amazon.tv.settings",
-                    "com.amazon.tv.settings.tv.accessibility.AccessibilityActivity"
-                )
-            }
+        val activities = arrayOf(
+            ".tv.network.NetworkActivity",
+            ".tv.display_sounds.DisplayAndSoundsActivity",
+            ".tv.applications.ApplicationsActivity",
+            ".tv.controllers_bluetooth_devices.ControllersAndBluetoothActivity",
+            ".tv.preferences.PreferencesActivity",
+            ".tv.device.DeviceActivity",
+            ".tv.accessibility.AccessibilityActivity"
         )
 
         AlertDialog.Builder(this)
             .setTitle(R.string.settings)
             .setItems(labels) { _, which ->
-                actions.getOrNull(which)?.invoke()
+                activities.getOrNull(which)?.let(::openFireTvSettingsPage)
             }
             .setNegativeButton(R.string.cancel, null)
             .show()
     }
 
-    private fun openSettingsComponent(packageName: String, className: String) {
-        val intent = Intent(Intent.ACTION_MAIN).apply {
-            component = ComponentName(packageName, className)
-            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        }
-
-        try {
-            startActivity(intent)
-        } catch (_: Exception) {
-            openGenericSystemSettings()
-        }
-    }
-
-    private fun openFireTvSettingsHome() {
-        val components = listOf(
-            ComponentName(
-                "com.amazon.tv.launcher",
-                "com.amazon.tv.launcher.ui.MainSettingsActivity"
-            ),
-            ComponentName(
-                "com.amazon.tv.launcher",
-                "com.amazon.tv.launcher.ui.SettingsActivity"
-            )
+    private fun openFireTvSettingsPage(relativeClassName: String) {
+        val packages = arrayOf(
+            "com.amazon.tv.settings.v2",
+            "com.amazon.tv.settings"
         )
 
-        components.forEach { component ->
+        packages.forEach { packageName ->
+            val component = ComponentName(
+                packageName,
+                packageName + relativeClassName
+            )
             try {
                 startActivity(
                     Intent(Intent.ACTION_MAIN).apply {
@@ -674,24 +652,6 @@ class MainActivity : Activity() {
                         addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                     }
                 )
-                return
-            } catch (_: Exception) {
-            }
-        }
-
-        openGenericSystemSettings()
-    }
-
-    private fun openGenericSystemSettings() {
-        val intents = listOf(
-            Intent("android.settings.TV_SETTINGS"),
-            Intent(Settings.ACTION_SETTINGS),
-            Intent(Settings.ACTION_DEVICE_INFO_SETTINGS)
-        )
-
-        intents.forEach { intent ->
-            try {
-                startActivity(intent)
                 return
             } catch (_: Exception) {
             }
@@ -939,7 +899,6 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        private const val COLUMNS = 6
-        private const val ROWS = 3
+        private const val CAROUSEL_VISIBLE_ITEMS = 7
     }
 }
