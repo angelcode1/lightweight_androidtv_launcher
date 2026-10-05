@@ -67,29 +67,54 @@ jobs:
       - name: Run tests and lint
         run: ./gradlew test lint --no-daemon
 
-      - name: Prepare permanent signing keystore
+      - name: Prepare signing keystore
+        id: signing
         env:
           KEYSTORE_B64: ${{ secrets.GAZELLE_SIGNING_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.GAZELLE_SIGNING_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.GAZELLE_SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.GAZELLE_SIGNING_KEY_PASSWORD }}
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$KEYSTORE_B64" || { echo 'Missing GAZELLE_SIGNING_KEYSTORE_B64'; exit 1; }
-          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$RUNNER_TEMP/gazelle-release.jks"
-          chmod 600 "$RUNNER_TEMP/gazelle-release.jks"
+          KEYSTORE="$RUNNER_TEMP/gazelle-release.jks"
+
+          present=0
+          [ -n "$KEYSTORE_B64" ] && present=$((present + 1))
+          [ -n "$STORE_PASSWORD" ] && present=$((present + 1))
+          [ -n "$KEY_ALIAS" ] && present=$((present + 1))
+          [ -n "$KEY_PASSWORD" ] && present=$((present + 1))
+
+          if [ "$present" -eq 4 ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
+            chmod 600 "$KEYSTORE"
+            echo "mode=permanent" >> "$GITHUB_OUTPUT"
+          elif [ "$present" -eq 0 ]; then
+            keytool -genkeypair               -keystore "$KEYSTORE"               -storetype JKS               -storepass gazelle-temp-build               -keypass gazelle-temp-build               -alias gazelle-temp               -keyalg RSA               -keysize 4096               -validity 3650               -dname "CN=Gazelle Launcher Temporary Build, O=angelcode1"
+            chmod 600 "$KEYSTORE"
+            echo "mode=temporary" >> "$GITHUB_OUTPUT"
+          else
+            echo "Signing secrets are partially configured. Configure all four or remove them all."
+            exit 1
+          fi
 
       - name: Build permanently signed release APK
+        if: steps.signing.outputs.mode == 'permanent'
         env:
           SIGNING_STORE_FILE: ${{ runner.temp }}/gazelle-release.jks
           SIGNING_STORE_PASSWORD: ${{ secrets.GAZELLE_SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.GAZELLE_SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.GAZELLE_SIGNING_KEY_PASSWORD }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$SIGNING_STORE_PASSWORD" || { echo 'Missing GAZELLE_SIGNING_STORE_PASSWORD'; exit 1; }
-          test -n "$SIGNING_KEY_ALIAS" || { echo 'Missing GAZELLE_SIGNING_KEY_ALIAS'; exit 1; }
-          test -n "$SIGNING_KEY_PASSWORD" || { echo 'Missing GAZELLE_SIGNING_KEY_PASSWORD'; exit 1; }
-          ./gradlew assembleRelease --no-daemon
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Build temporary-key signed release APK
+        if: steps.signing.outputs.mode == 'temporary'
+        env:
+          SIGNING_STORE_FILE: ${{ runner.temp }}/gazelle-release.jks
+          SIGNING_STORE_PASSWORD: gazelle-temp-build
+          SIGNING_KEY_ALIAS: gazelle-temp
+          SIGNING_KEY_PASSWORD: gazelle-temp-build
+        run: ./gradlew assembleRelease --no-daemon
 
       - name: Verify signature and stage release assets
         shell: bash
@@ -103,6 +128,7 @@ jobs:
           /usr/local/lib/android/sdk/build-tools/34.0.0/apksigner \
             verify --verbose --print-certs "$APK" | tee dist/APK-CERTIFICATE.txt
           cp "$APK" "dist/gazelle-launcher-${VERSION}-release-signed.apk"
+          printf '%s\n' "${{ steps.signing.outputs.mode }}" > dist/SIGNING-MODE.txt
           (cd dist && sha256sum *.apk > SHA256SUMS.txt)
 
       - name: Upload workflow artifact
@@ -118,15 +144,18 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.name }}
           VERSION_CODE: ${{ steps.version.outputs.code }}
+          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
           cat > release-notes.md <<EOF
-          Fire TV Cube 3 Gazelle Launcher permanently signed prerelease.
+          Fire TV Cube 3 Gazelle Launcher signed prerelease.
 
           Version code: $VERSION_CODE
+          Signing mode: $SIGNING_MODE
 
-          The APK is signed with the permanent Gazelle release key.
+          If Signing mode is temporary, this APK uses a one-time runner-generated key.
+          A future permanent-key build will require one uninstall/reinstall transition.
           Release tags and assets are immutable: bump versionName/versionCode for every new release.
           EOF
           gh release create "$TAG" dist/* \
