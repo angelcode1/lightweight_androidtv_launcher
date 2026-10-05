@@ -34,6 +34,7 @@ Sources currently implemented:
 
 - solid: no wallpaper bitmap;
 - bing: Bing homepage image collection, Australian market;
+- amazon: optional Amazon Fire TV Collection, Australian `collections_en_AU_v3.json` manifest;
 - nature: Wallhaven safe nature search;
 - custom: direct HTTPS image.
 
@@ -42,6 +43,22 @@ Gazelle-specific hardening includes HTTPS-only image URLs, a 12 MB download cap,
 Centre-crop decoding uses the largest power-of-two BitmapFactory sample that leaves both decoded dimensions at least as large as the display target. This avoids decode bombs without downsampling common 2560x1440 or 1920x1200 wallpapers and then forcing CENTER_CROP to upscale them.
 
 Each refresh captures the source configuration at start. Different source configurations may refresh concurrently, but a stale refresh cannot replace the cache or advance LAST_FETCH after the source/custom URL changes. The cache stores its configuration key and is not displayed for another source.
+
+### Amazon Fire TV Collection
+
+The optional Amazon provider does not read Amazon application-private files. It fetches the Australian collection manifest at runtime from:
+
+    https://d21m0ezw6fosyw.cloudfront.net/manifest/collections_en_AU_v3.json
+
+Only HTTPS JPEG image paths on `d21m0ezw6fosyw.cloudfront.net` are accepted. PNG/mask/non-photo assets are excluded by the JPEG-only rule. The manifest is cached for offline fallback, while the existing wallpaper cache stores the currently selected image.
+
+Captions are retained with the cached image and can be shown briefly in the lower-left corner. Caption display is optional.
+
+No Amazon photographs are bundled in the APK. Public CDN access is not treated as a redistribution license; applicable Amazon/content-owner terms should be reviewed before enabling this provider in a public release.
+
+The first implementation deliberately retains one current image rather than a 5–10 image ring, preserving the launcher's low-storage design. A bounded prefetch ring can be added later if on-device measurements justify it.
+
+The manifest parser is intentionally tolerant of multiple field spellings/nesting. It must still be verified against the live AU manifest on the Cube to confirm that the preferred compressed image path is selected consistently.
 
 Bing's HPImageArchive endpoint is not a documented public API and should be treated as replaceable. Google TV Ambient Mode, Amazon Ambient Experience and Roku Backdrops likewise do not expose documented third-party wallpaper-feed APIs suitable for a stable dependency.
 
@@ -133,7 +150,7 @@ Possible final messages include:
 
 WALLPAPER_SET_SOURCE accepts:
 
-    source = solid | bing | nature | custom
+    source = solid | bing | amazon | nature | custom
     custom_url = optional HTTPS image URL
 
 The solid source completes immediately but follows the same wallpaper API shape: the ordered broadcast returns accepted and, when reply_package is supplied, the final ACTION_RESULT reports wallpaper_source_set.
@@ -170,7 +187,9 @@ No Cube-specific RAM or CPU claim is made yet. Measure the upstream launcher, Ga
 
 At commit af4fb8e, all Kotlin source files compiled against android-34.jar using a stub R, all R references resolved, and the five pure unit tests passed under a minimal JUnit shim. AAPT, lint, R8 and on-device behavior remained unverified.
 
-Subsequent fixes changed sampling, pinned-app repair, wallpaper source-race handling and HOME lifecycle behavior, so those changes require the same compile/test pass again before the branch should be treated as build-verified.
+Subsequent fixes changed sampling, pinned-app repair, wallpaper source-race handling, HOME lifecycle behavior, and added the Amazon Collection provider/caption UI. Those changes require the same compile/test pass again before the branch should be treated as build-verified.
+
+Cube debloat compatibility notes are in `docs/cube3-debloat-policy.md`; the stock screensaver/local-gallery packages are intentionally kept separate from Gazelle's HOME wallpaper provider.
 
 Current pure tests cover:
 
