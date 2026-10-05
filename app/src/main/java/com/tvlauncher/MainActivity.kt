@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.Color
+import android.graphics.drawable.Drawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -38,6 +39,18 @@ class MainActivity : Activity() {
     private var lastFocusedPosition = 0
     private var isHomeVisible = false
     private var wallpaperReceiverRegistered = false
+    private var visibleEntries: List<AppEntry> = emptyList()
+
+    @Volatile
+    private var homeLoadGeneration = 0
+
+    @Volatile
+    private var wallpaperLoadGeneration = 0
+
+    private data class HomeTile(
+        val entry: AppEntry,
+        val icon: Drawable
+    )
 
     private val wallpaperChangedReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -45,7 +58,7 @@ class MainActivity : Activity() {
                 intent?.action == ControlReceiver.ACTION_WALLPAPER_CHANGED &&
                 isHomeVisible
             ) {
-                applyWallpaperFromCache()
+                scheduleWallpaperLoad()
             }
         }
     }
@@ -64,13 +77,15 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        populateGrid()
-        applyWallpaperFromCache()
+        scheduleHomeRefresh()
+        scheduleWallpaperLoad()
         refreshWallpaperIfNeeded(force = false)
     }
 
     override fun onStop() {
         isHomeVisible = false
+        homeLoadGeneration++
+        wallpaperLoadGeneration++
         unregisterWallpaperReceiver()
         releaseWallpaperBitmap()
         super.onStop()
@@ -97,7 +112,10 @@ class MainActivity : Activity() {
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        if (keyCode == KeyEvent.KEYCODE_BACK) {
+        if (
+            keyCode == KeyEvent.KEYCODE_BACK &&
+            intent?.hasCategory(Intent.CATEGORY_HOME) == true
+        ) {
             appGrid.getChildAt(0)?.requestFocus()
             return true
         }
@@ -286,15 +304,47 @@ class MainActivity : Activity() {
         return header
     }
 
-    private fun populateGrid() {
-        appGrid.removeAllViews()
-        val entries = repository.getSelectedEntries()
+    private fun scheduleHomeRefresh() {
+        val generation = ++homeLoadGeneration
+        val iconSizePx = calculateIconSizePx()
 
-        entries.forEachIndexed { index, entry ->
-            appGrid.addView(createAppTile(entry, index), tileLayoutParams())
+        Thread {
+            val entries = repository.getSelectedEntries()
+            val tiles = entries.map { entry ->
+                HomeTile(
+                    entry = entry,
+                    icon = repository.loadRoundedIcon(entry, iconSizePx)
+                )
+            }
+
+            runOnUiThread {
+                if (
+                    !isHomeVisible ||
+                    isFinishing ||
+                    generation != homeLoadGeneration
+                ) {
+                    return@runOnUiThread
+                }
+                populateGrid(tiles)
+            }
+        }.apply {
+            name = "gazelle-home-load"
+            isDaemon = true
+        }.start()
+    }
+
+    private fun populateGrid(tiles: List<HomeTile>) {
+        appGrid.removeAllViews()
+        visibleEntries = tiles.map { it.entry }
+
+        tiles.forEachIndexed { index, tile ->
+            appGrid.addView(
+                createAppTile(tile.entry, tile.icon, index),
+                tileLayoutParams()
+            )
         }
 
-        appGrid.addView(createAddTile(entries.size), tileLayoutParams())
+        appGrid.addView(createAddTile(tiles.size), tileLayoutParams())
 
         appGrid.post {
             val target = lastFocusedPosition
@@ -303,12 +353,16 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun createAppTile(entry: AppEntry, position: Int): View {
+    private fun createAppTile(
+        entry: AppEntry,
+        loadedIcon: Drawable,
+        position: Int
+    ): View {
         val tile = baseTile()
 
         val iconSizePx = calculateIconSizePx()
         val icon = ImageView(this).apply {
-            setImageDrawable(repository.loadRoundedIcon(entry, iconSizePx))
+            setImageDrawable(loadedIcon)
             scaleType = ImageView.ScaleType.FIT_CENTER
         }
         tile.addView(icon, LinearLayout.LayoutParams(iconSizePx, iconSizePx))
@@ -423,7 +477,7 @@ class MainActivity : Activity() {
     }
 
     private fun showAppMenu(entry: AppEntry, position: Int) {
-        val visibleEntries = repository.getSelectedEntries()
+        val entriesSnapshot = visibleEntries
         val labels = mutableListOf<String>()
         val actions = mutableListOf<() -> Unit>()
 
@@ -431,26 +485,26 @@ class MainActivity : Activity() {
         actions.add { repository.launch(entry) }
 
         if (position > 0) {
-            val leftId = visibleEntries.getOrNull(position - 1)?.id
+            val leftId = entriesSnapshot.getOrNull(position - 1)?.id
             if (leftId != null) {
                 labels.add(getString(R.string.app_menu_move_left))
                 actions.add {
                     if (repository.swapSelected(entry.id, leftId)) {
                         lastFocusedPosition = position - 1
-                        populateGrid()
+                        scheduleHomeRefresh()
                     }
                 }
             }
         }
 
-        if (position < visibleEntries.size - 1) {
-            val rightId = visibleEntries.getOrNull(position + 1)?.id
+        if (position < entriesSnapshot.size - 1) {
+            val rightId = entriesSnapshot.getOrNull(position + 1)?.id
             if (rightId != null) {
                 labels.add(getString(R.string.app_menu_move_right))
                 actions.add {
                     if (repository.swapSelected(entry.id, rightId)) {
                         lastFocusedPosition = position + 1
-                        populateGrid()
+                        scheduleHomeRefresh()
                     }
                 }
             }
@@ -463,7 +517,7 @@ class MainActivity : Activity() {
         actions.add {
             repository.removeSelected(entry.id)
             lastFocusedPosition = (position - 1).coerceAtLeast(0)
-            populateGrid()
+            scheduleHomeRefresh()
         }
 
         AlertDialog.Builder(this)
@@ -613,7 +667,7 @@ class MainActivity : Activity() {
                 NatureWallpaperManager.setDimEnabled(this, dim.isChecked)
                 NatureWallpaperManager.setCaptionEnabled(this, caption.isChecked)
 
-                applyWallpaperFromCache()
+                scheduleWallpaperLoad()
                 refreshWallpaperIfNeeded(force = true)
             }
             .setNeutralButton(R.string.wallpaper_refresh_now) { _, _ ->
@@ -643,7 +697,7 @@ class MainActivity : Activity() {
             if (!isHomeVisible || isFinishing) return@refreshAsync
             when (result) {
                 NatureWallpaperManager.RefreshResult.SUCCESS ->
-                    applyWallpaperFromCache()
+                    scheduleWallpaperLoad()
                 NatureWallpaperManager.RefreshResult.BUSY,
                 NatureWallpaperManager.RefreshResult.STALE -> Unit
                 NatureWallpaperManager.RefreshResult.FAILED -> {
@@ -659,36 +713,66 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun applyWallpaperFromCache() {
-        if (!isHomeVisible) return
-        if (NatureWallpaperManager.getSource(this) == NatureWallpaperManager.SOURCE_SOLID) {
-            wallpaperImage.setImageDrawable(null)
-            wallpaperImage.visibility = View.GONE
-            wallpaperDim.visibility = View.GONE
-            return
-        }
-
+    private fun scheduleWallpaperLoad() {
+        val generation = ++wallpaperLoadGeneration
         val metrics = resources.displayMetrics
-        val drawable = NatureWallpaperManager.loadCachedDrawable(
-            this,
-            metrics.widthPixels,
-            metrics.heightPixels
-        )
+        val width = metrics.widthPixels
+        val height = metrics.heightPixels
 
+        Thread {
+            val source = NatureWallpaperManager.getSource(applicationContext)
+            val drawable = if (source == NatureWallpaperManager.SOURCE_SOLID) {
+                null
+            } else {
+                NatureWallpaperManager.loadCachedDrawable(
+                    applicationContext,
+                    width,
+                    height
+                )
+            }
+            val dimEnabled = NatureWallpaperManager.isDimEnabled(applicationContext)
+            val captionEnabled =
+                NatureWallpaperManager.isCaptionEnabled(applicationContext)
+            val caption = NatureWallpaperManager.getCachedCaption(applicationContext)
+
+            runOnUiThread {
+                if (
+                    !isHomeVisible ||
+                    isFinishing ||
+                    generation != wallpaperLoadGeneration
+                ) {
+                    return@runOnUiThread
+                }
+                applyLoadedWallpaper(
+                    drawable = drawable,
+                    dimEnabled = dimEnabled,
+                    captionEnabled = captionEnabled,
+                    caption = caption
+                )
+            }
+        }.apply {
+            name = "gazelle-wallpaper-decode"
+            isDaemon = true
+        }.start()
+    }
+
+    private fun applyLoadedWallpaper(
+        drawable: Drawable?,
+        dimEnabled: Boolean,
+        captionEnabled: Boolean,
+        caption: String
+    ) {
         if (drawable == null) {
-            wallpaperImage.setImageDrawable(null)
-            wallpaperImage.visibility = View.GONE
-            wallpaperDim.visibility = View.GONE
+            releaseWallpaperBitmap()
             return
         }
 
         wallpaperImage.setImageDrawable(drawable)
         wallpaperImage.visibility = View.VISIBLE
         wallpaperDim.visibility =
-            if (NatureWallpaperManager.isDimEnabled(this)) View.VISIBLE else View.GONE
+            if (dimEnabled) View.VISIBLE else View.GONE
 
-        val caption = NatureWallpaperManager.getCachedCaption(this)
-        if (NatureWallpaperManager.isCaptionEnabled(this) && caption.isNotBlank()) {
+        if (captionEnabled && caption.isNotBlank()) {
             wallpaperCaption.text = caption
             wallpaperCaption.visibility = View.VISIBLE
             wallpaperCaption.postDelayed({
