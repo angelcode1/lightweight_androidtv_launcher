@@ -33,6 +33,7 @@ class MainActivity : Activity() {
     private lateinit var appGrid: GridLayout
     private lateinit var wallpaperImage: ImageView
     private lateinit var wallpaperDim: View
+    private lateinit var wallpaperCaption: TextView
 
     private var lastFocusedPosition = 0
     private var isHomeVisible = false
@@ -133,6 +134,10 @@ class MainActivity : Activity() {
         wallpaperImage.setImageDrawable(null)
         wallpaperImage.visibility = View.GONE
         wallpaperDim.visibility = View.GONE
+        if (::wallpaperCaption.isInitialized) {
+            wallpaperCaption.text = ""
+            wallpaperCaption.visibility = View.GONE
+        }
     }
 
     private fun buildUi(): View {
@@ -162,6 +167,26 @@ class MainActivity : Activity() {
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
+        )
+
+        wallpaperCaption = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            maxLines = 3
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            setBackgroundColor(0x66000000)
+            visibility = View.GONE
+        }
+        root.addView(
+            wallpaperCaption,
+            FrameLayout.LayoutParams(
+                dp(520),
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.START or Gravity.BOTTOM
+            ).apply {
+                leftMargin = dp(28)
+                bottomMargin = dp(24)
+            }
         )
 
         val content = LinearLayout(this).apply {
@@ -481,12 +506,14 @@ class MainActivity : Activity() {
         val sourceKeys = arrayOf(
             NatureWallpaperManager.SOURCE_SOLID,
             NatureWallpaperManager.SOURCE_BING,
+            NatureWallpaperManager.SOURCE_AMAZON,
             NatureWallpaperManager.SOURCE_NATURE,
             NatureWallpaperManager.SOURCE_CUSTOM
         )
         val sourceLabels = arrayOf(
             getString(R.string.wallpaper_source_solid),
             getString(R.string.wallpaper_source_bing),
+            getString(R.string.wallpaper_source_amazon),
             getString(R.string.wallpaper_source_nature),
             getString(R.string.wallpaper_source_custom)
         )
@@ -561,6 +588,12 @@ class MainActivity : Activity() {
         }
         panel.addView(dim)
 
+        val caption = CheckBox(this).apply {
+            text = getString(R.string.wallpaper_caption)
+            isChecked = NatureWallpaperManager.isCaptionEnabled(this@MainActivity)
+        }
+        panel.addView(caption)
+
         panel.addView(
             TextView(this).apply {
                 text = getString(R.string.wallpaper_note)
@@ -578,6 +611,7 @@ class MainActivity : Activity() {
                 NatureWallpaperManager.setInterval(this, intervalValues[intervalIndex])
                 NatureWallpaperManager.setCustomUrl(this, customUrl.text.toString())
                 NatureWallpaperManager.setDimEnabled(this, dim.isChecked)
+                NatureWallpaperManager.setCaptionEnabled(this, caption.isChecked)
 
                 applyWallpaperFromCache()
                 refreshWallpaperIfNeeded(force = true)
@@ -587,6 +621,7 @@ class MainActivity : Activity() {
                 NatureWallpaperManager.setInterval(this, intervalValues[intervalIndex])
                 NatureWallpaperManager.setCustomUrl(this, customUrl.text.toString())
                 NatureWallpaperManager.setDimEnabled(this, dim.isChecked)
+                NatureWallpaperManager.setCaptionEnabled(this, caption.isChecked)
                 refreshWallpaperIfNeeded(force = true)
             }
             .setNegativeButton(R.string.cancel, null)
@@ -650,6 +685,15 @@ class MainActivity : Activity() {
         wallpaperImage.visibility = View.VISIBLE
         wallpaperDim.visibility =
             if (NatureWallpaperManager.isDimEnabled(this)) View.VISIBLE else View.GONE
+
+        val caption = NatureWallpaperManager.getCachedCaption(this)
+        if (NatureWallpaperManager.isCaptionEnabled(this) && caption.isNotBlank()) {
+            wallpaperCaption.text = caption
+            wallpaperCaption.visibility = View.VISIBLE
+        } else {
+            wallpaperCaption.text = ""
+            wallpaperCaption.visibility = View.GONE
+        }
     }
 
     private fun dp(value: Int): Int {
