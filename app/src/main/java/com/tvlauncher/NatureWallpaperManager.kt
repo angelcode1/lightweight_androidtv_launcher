@@ -281,7 +281,7 @@ object NatureWallpaperManager {
     ): RefreshResult = synchronized(stateLock) {
         val current = snapshotConfig(context)
         if (current != config) {
-            temp.delete()
+            downloadTemp.delete()
             return@synchronized RefreshResult.STALE
         }
 
@@ -290,7 +290,7 @@ object NatureWallpaperManager {
         backup.delete()
 
         if (destination.exists() && !destination.renameTo(backup)) {
-            temp.delete()
+            downloadTemp.delete()
             return@synchronized RefreshResult.FAILED
         }
 
@@ -298,7 +298,7 @@ object NatureWallpaperManager {
             if (backup.exists()) {
                 backup.renameTo(destination)
             }
-            temp.delete()
+            downloadTemp.delete()
             return@synchronized RefreshResult.FAILED
         }
 
@@ -526,6 +526,7 @@ object NatureWallpaperManager {
             }
 
             var connection: HttpURLConnection? = null
+            var temp: File? = null
             try {
                 connection = (url.openConnection() as HttpURLConnection).apply {
                     connectTimeout = timeoutFor(deadline, MAX_CONNECT_TIMEOUT_MS)
@@ -623,21 +624,22 @@ object NatureWallpaperManager {
                 val type = connection.contentType.orEmpty().lowercase()
                 if (type.isNotEmpty() && !type.startsWith("image/")) return null
 
-                val temp = File.createTempFile(
+                val downloadTemp = File.createTempFile(
                     "gazelle-wallpaper-",
                     ".tmp",
                     context.cacheDir
                 )
+                temp = downloadTemp
                 var total = 0L
                 connection.inputStream.use { input ->
-                    FileOutputStream(temp).use { output ->
+                    FileOutputStream(downloadTemp).use { output ->
                         val buffer = ByteArray(8192)
                         while (!deadlineExpired(deadline)) {
                             val count = input.read(buffer)
                             if (count <= 0) break
                             total += count
                             if (total > MAX_DOWNLOAD_BYTES) {
-                                temp.delete()
+                                downloadTemp.delete()
                                 return null
                             }
                             output.write(buffer, 0, count)
@@ -647,17 +649,18 @@ object NatureWallpaperManager {
                 }
 
                 if (deadlineExpired(deadline)) {
-                    temp.delete()
+                    downloadTemp.delete()
                     return null
                 }
 
                 if (total < 1024L || !isValidImage(temp)) {
-                    temp.delete()
+                    downloadTemp.delete()
                     return null
                 }
 
-                return temp
+                return downloadTemp
             } catch (_: Exception) {
+                temp?.delete()
                 return null
             } finally {
                 connection?.disconnect()
