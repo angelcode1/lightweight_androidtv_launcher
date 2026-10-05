@@ -281,7 +281,7 @@ object NatureWallpaperManager {
     ): RefreshResult = synchronized(stateLock) {
         val current = snapshotConfig(context)
         if (current != config) {
-            downloadTemp.delete()
+            temp.delete()
             return@synchronized RefreshResult.STALE
         }
 
@@ -290,7 +290,7 @@ object NatureWallpaperManager {
         backup.delete()
 
         if (destination.exists() && !destination.renameTo(backup)) {
-            downloadTemp.delete()
+            temp.delete()
             return@synchronized RefreshResult.FAILED
         }
 
@@ -298,7 +298,7 @@ object NatureWallpaperManager {
             if (backup.exists()) {
                 backup.renameTo(destination)
             }
-            downloadTemp.delete()
+            temp.delete()
             return@synchronized RefreshResult.FAILED
         }
 
