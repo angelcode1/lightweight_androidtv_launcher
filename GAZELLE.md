@@ -213,3 +213,19 @@ The wallpaper bitmap is still released in `onStop()` to retain the intended RAM 
 BACK is swallowed only when `MainActivity` was invoked with the HOME category; a normal launcher/activity invocation can use BACK normally.
 
 HA wallpaper jobs are scheduled for immediate execution without a contradictory network constraint + immediate deadline pair. Network success/failure is handled by the launcher's bounded HTTP timeouts.
+
+
+## HOME visual hierarchy
+
+The gazelle.7 HOME pass keeps the framework-only 6 x 3 grid but reduces permanent chrome:
+
+- idle app tiles use a near-transparent dark surface with no visible outline;
+- focus adds the brighter surface, soft outline, slight scale and elevation;
+- icons are capped at 54dp instead of 68dp;
+- labels use 13sp with a subtle shadow for wallpaper legibility;
+- tile height is capped at 116dp with 14dp total gutters;
+- wallpaper/settings header controls are 42dp, muted when idle and emphasized on focus;
+- Add app is intentionally lower-emphasis until focused;
+- a subtle left-to-right wallpaper scrim improves text readability without replacing the user's optional dim control.
+
+This is a visual-only refinement; it does not add runtime libraries or resident services.
