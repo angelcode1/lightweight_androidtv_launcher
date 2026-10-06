@@ -5,6 +5,7 @@
     <string name="search_hint">Search apps or packages…</string>
     <string name="done">Done</string>
     <string name="settings">System settings</string>
+    <string name="settings_home">Fire TV Settings</string>
     <string name="settings_network">Network</string>
     <string name="settings_display_sounds">Display &amp; Sounds</string>
     <string name="settings_applications">Applications</string>
