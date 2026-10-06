@@ -678,6 +678,17 @@ class MainActivity : Activity() {
                     addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
             )
+        } catch (e: SecurityException) {
+            Log.e(
+                "GazelleLauncher",
+                "Amazon Settings permission denied: action=${target.action} class=${target.className}",
+                e
+            )
+            Toast.makeText(
+                this,
+                R.string.settings_open_failed,
+                Toast.LENGTH_SHORT
+            ).show()
         } catch (e: Exception) {
             Log.w(
                 "GazelleLauncher",
