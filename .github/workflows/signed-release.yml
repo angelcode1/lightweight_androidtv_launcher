@@ -128,8 +128,25 @@ jobs:
           /usr/local/lib/android/sdk/build-tools/34.0.0/apksigner \
             verify --verbose --print-certs "$APK" | tee dist/APK-CERTIFICATE.txt
           cp "$APK" "dist/gazelle-launcher-${VERSION}-release-signed.apk"
+
+          MODULE_DIR="$RUNNER_TEMP/gazelle-launcher-privileged"
+          mkdir -p "$MODULE_DIR/system/priv-app/GazelleLauncher"
+          cp "$APK" "$MODULE_DIR/system/priv-app/GazelleLauncher/GazelleLauncher.apk"
+          cat > "$MODULE_DIR/module.prop" <<EOF
+          id=gazelle_launcher_privileged
+          name=Gazelle Launcher Privileged
+          version=$VERSION
+          versionCode=${{ steps.version.outputs.code }}
+          author=angelcode1
+          description=Installs Gazelle Launcher as a privileged Fire OS system launcher
+          EOF
+          (
+            cd "$MODULE_DIR"
+            zip -r9 -X "$GITHUB_WORKSPACE/dist/gazelle-launcher-privileged-v${{ steps.version.outputs.code }}.zip" module.prop system
+          )
+
           printf '%s\n' "${{ steps.signing.outputs.mode }}" > dist/SIGNING-MODE.txt
-          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          (cd dist && sha256sum *.apk *.zip > SHA256SUMS.txt)
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
