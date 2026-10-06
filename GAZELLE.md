@@ -24,7 +24,7 @@ CI on `main` and pull requests runs tests, lint, debug assembly, and unsigned re
 
 `.github/workflows/release.yml` is a manual unsigned verification build only. It never creates or mutates a GitHub release/tag.
 
-`.github/workflows/signed-release.yml` is the only publication workflow. It is main-only, requires the permanent signing secrets, refuses to reuse an existing tag, and publishes a signed APK plus certificate/checksum metadata.
+`.github/workflows/signed-release.yml` is the publication workflow. It is main-only, refuses to reuse an existing tag, and publishes a signed APK plus certificate/checksum metadata and the matching privileged Magisk-module ZIP. Permanent signing secrets are preferred; temporary signing is explicitly marked when used for prerelease testing.
 
 Release signing uses:
 
@@ -175,6 +175,30 @@ This avoids a listening TCP socket or permanent control service in the launcher.
 ## Platform scope
 
 The current Cube 3 Fire OS 7 target is Android 9 / API 28, where this background receiver launch path is suitable. A future LineageOS port based on newer Android versions must re-evaluate background-activity-launch restrictions.
+
+## Fire TV Settings permission
+
+The stock Fire TV Settings activities are protected by
+`com.amazon.tv.permission.LAUNCHER_SETTINGS`, reported on the tested Cube 3
+Fire OS build as `signature|privileged|amazon`.
+
+Gazelle declares that permission in its manifest. A normal `/data/app`
+installation requests it but does not receive the install-time grant. On the
+rooted Cube 3, placing the same signed APK under
+`/system/priv-app/GazelleLauncher/GazelleLauncher.apk` through a Magisk module
+causes PackageManager to treat the package as `SYSTEM` + `PRIVILEGED`; an
+ordinary newer `/data/app` APK with the same package/signature is then treated
+as an `UPDATED_SYSTEM_APP`.
+
+On the tested Fire OS build, privileged placement alone granted
+`com.amazon.tv.permission.LAUNCHER_SETTINGS`; no
+`privapp-permissions-*.xml` allowlist was required. Verify after reboot with:
+
+    dumpsys package com.gazelle.launcher | grep -E \
+      'flags=\[|privateFlags=\[|LAUNCHER_SETTINGS'
+
+The expected state includes `SYSTEM`, `PRIVILEGED`, and
+`com.amazon.tv.permission.LAUNCHER_SETTINGS: granted=true`.
 
 ## Cube installation
 
