@@ -14,6 +14,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
@@ -677,7 +678,12 @@ class MainActivity : Activity() {
                     addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                 }
             )
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(
+                "GazelleLauncher",
+                "Amazon Settings launch failed: action=${target.action} class=${target.className}",
+                e
+            )
             openGenericSettingsFallback(target.action)
         }
     }
