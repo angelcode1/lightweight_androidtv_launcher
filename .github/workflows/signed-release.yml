@@ -180,3 +180,14 @@ jobs:
             --title "Gazelle Launcher $VERSION" \
             --prerelease \
             --notes-file release-notes.md
+
+      - name: Delete merged stale branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="gazelle-amazon-settings-permission"
+          if git ls-remote --exit-code --heads origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH"
+          fi
