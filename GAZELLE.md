@@ -176,6 +176,23 @@ This avoids a listening TCP socket or permanent control service in the launcher.
 
 The current Cube 3 Fire OS 7 target is Android 9 / API 28, where this background receiver launch path is suitable. A future LineageOS port based on newer Android versions must re-evaluate background-activity-launch restrictions.
 
+## Fire TV Settings permission
+
+The stock Fire TV Settings activities are protected by
+`com.amazon.tv.permission.LAUNCHER_SETTINGS`, which Gazelle reports as
+`signature|privileged|amazon`. A normal `/data/app` installation cannot launch
+those protected pages.
+
+For the rooted Gazelle deployment, install the launcher as a privileged system
+app (for example through a Magisk system overlay), keep the manifest
+`<uses-permission android:name="com.amazon.tv.permission.LAUNCHER_SETTINGS" />`,
+and allowlist that permission for package `com.gazelle.launcher` under
+`/system/etc/permissions/privapp-permissions-*.xml`.
+
+After reboot, verify that PackageManager reports the launcher as SYSTEM and
+PRIVILEGED and grants `com.amazon.tv.permission.LAUNCHER_SETTINGS` before
+testing the gear-menu Settings shortcuts.
+
 ## Cube installation
 
 After installing the APK, set its Home activity:
