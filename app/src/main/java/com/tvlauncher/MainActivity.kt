@@ -612,11 +612,13 @@ class MainActivity : Activity() {
 
     private data class FireTvSettingsTarget(
         val action: String,
-        val className: String
+        val className: String,
+        val packageName: String = FIRE_TV_SETTINGS_PACKAGE
     )
 
     private fun showSystemSettingsMenu() {
         val labels = arrayOf(
+            getString(R.string.settings_home),
             getString(R.string.settings_network),
             getString(R.string.settings_display_sounds),
             getString(R.string.settings_applications),
@@ -627,6 +629,11 @@ class MainActivity : Activity() {
         )
 
         val targets = arrayOf(
+            FireTvSettingsTarget(
+                action = Settings.ACTION_SETTINGS,
+                className = "com.amazon.tv.launcher.ui.MainSettingsActivity",
+                packageName = FIRE_TV_LAUNCHER_PACKAGE
+            ),
             FireTvSettingsTarget(
                 action = Settings.ACTION_WIRELESS_SETTINGS,
                 className = "com.amazon.tv.settings.v2.tv.network.NetworkActivity"
@@ -671,7 +678,7 @@ class MainActivity : Activity() {
             startActivity(
                 Intent(target.action).apply {
                     component = ComponentName(
-                        FIRE_TV_SETTINGS_PACKAGE,
+                        target.packageName,
                         target.className
                     )
                     addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -940,5 +947,6 @@ class MainActivity : Activity() {
     companion object {
         private const val CAROUSEL_VISIBLE_ITEMS = 7
         private const val FIRE_TV_SETTINGS_PACKAGE = "com.amazon.tv.settings.v2"
+        private const val FIRE_TV_LAUNCHER_PACKAGE = "com.amazon.tv.launcher"
     }
 }
