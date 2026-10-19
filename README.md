@@ -46,11 +46,11 @@ Press **Home** on the remote to open the launcher.
 
 **Home screen**
 
-![Home Screen](screenshot_home_screen.png)
+![Home Screen](fastlane/metadata/android/en-US/images/phoneScreenshots/01_home_screen.png)
 
 **App selection**
 
-![App Selection](screenshot_add_apps_window.png)
+![App Selection](fastlane/metadata/android/en-US/images/phoneScreenshots/02_app_selection.png)
 
 ## Download with Downloader
 
