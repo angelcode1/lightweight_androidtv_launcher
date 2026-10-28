@@ -1,6 +1,6 @@
 # Gazelle Launcher
 
-Fire TV Cube 3 (AFTGAZL / gazelle) optimized branch.
+Fire TV Cube 3 (AFTGAZL / gazelle) optimized launcher, merged into `main`.
 
 ## What changed
 
@@ -20,11 +20,11 @@ Fire TV Cube 3 (AFTGAZL / gazelle) optimized branch.
 
     ./gradlew clean test lint assembleDebug assembleRelease
 
-CI on `main` and pull requests runs tests, lint, debug assembly, and unsigned release assembly so AAPT/R8/shrinkResources are exercised without publishing a release.
+CI on `main` and pull requests runs tests, lint, debug assembly, and unsigned release assembly so AAPT/R8/shrinkResources are exercised. It uploads an installable debug APK for short-lived testing and an unsigned R8 release APK for verification. Neither CI artifact is a stable signed upgrade channel.
 
 `.github/workflows/release.yml` is a manual unsigned verification build only. It never creates or mutates a GitHub release/tag.
 
-`.github/workflows/signed-release.yml` is the publication workflow. It is main-only, refuses to reuse an existing tag, and publishes a signed APK plus certificate/checksum metadata and the matching privileged Magisk-module ZIP. Permanent signing secrets are preferred; temporary signing is explicitly marked when used for prerelease testing.
+`.github/workflows/signed-release.yml` is the publication workflow. A version bump in `app/build.gradle` on `main`, a change to `.github/release-trigger`, or manual workflow dispatch runs tests/lint and publishes a new tagged prerelease with a signed APK, certificate/checksums, and a matching privileged Magisk-module ZIP. It refuses existing tags. Permanent signing secrets are preferred; temporary signing is explicitly marked when used for prerelease testing.
 
 Release signing uses:
 
@@ -33,7 +33,7 @@ Release signing uses:
     SIGNING_KEY_ALIAS
     SIGNING_KEY_PASSWORD
 
-Every published release must bump both versionName and versionCode. Existing release tags/assets are treated as immutable.
+Every published release must bump both versionName and versionCode. Existing release tags/assets are treated as immutable. **Warning:** the `v1.6.1-gazelle.13` prerelease used a one-off temporary signing key, and without all four permanent keystore secrets every subsequent automated prerelease uses a *different* certificate. Such APKs cannot install as in-place updates to one another: uninstalling the prior app (and potentially losing app data) is required. Do not treat temporary-key releases as an auto-update channel. For permanent upgrades, configure `GAZELLE_SIGNING_KEYSTORE_B64`, `GAZELLE_SIGNING_STORE_PASSWORD`, `GAZELLE_SIGNING_KEY_ALIAS`, and `GAZELLE_SIGNING_KEY_PASSWORD` consistently before releasing.
 
 ## Wallpaper design
 
@@ -220,7 +220,7 @@ At commit af4fb8e, all Kotlin source files compiled against android-34.jar using
 
 Subsequent fixes changed sampling, pinned-app repair, wallpaper source-race handling, HOME lifecycle behavior, added the Amazon Collection provider/caption UI, and moved HOME app/icon plus wallpaper decode work off the main thread. Those changes require the same compile/test pass again before the branch should be treated as build-verified.
 
-The CI workflow runs `assembleRelease` as an unsigned verification build to exercise R8 and `shrinkResources`. A separate manual `signed-release.yml` workflow publishes the permanently signed APK from `main` only.
+The CI workflow runs `assembleRelease` as an unsigned verification build to exercise R8 and `shrinkResources`. The separate `signed-release.yml` workflow publishes signed prerelease APKs from `main` on version bumps or manual dispatch. Permanent release signatures require repository signing secrets; otherwise it uses a one-off temporary key.
 
 Cube debloat compatibility notes are in `docs/cube3-debloat-policy.md`; the stock screensaver/local-gallery packages are intentionally kept separate from Gazelle's HOME wallpaper provider.
 

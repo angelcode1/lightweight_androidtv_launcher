@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'app/build.gradle'
       - '.github/release-trigger'
 
 permissions:
@@ -123,6 +124,10 @@ jobs:
           APK=app/build/outputs/apk/release/app-release.apk
           test -f "$APK"
           test ! -f app/build/outputs/apk/release/app-release-unsigned.apk
+          BADGING="$(/usr/local/lib/android/sdk/build-tools/34.0.0/aapt dump badging "$APK")"
+          printf '%s\n' "$BADGING" | grep -F "name='com.gazelle.launcher'"
+          printf '%s\n' "$BADGING" | grep -F "versionCode='${{ steps.version.outputs.code }}'"
+          printf '%s\n' "$BADGING" | grep -F "versionName='${{ steps.version.outputs.name }}'"
           mkdir -p dist
           VERSION="${{ steps.version.outputs.name }}"
           /usr/local/lib/android/sdk/build-tools/34.0.0/apksigner \
@@ -171,8 +176,12 @@ jobs:
           Version code: $VERSION_CODE
           Signing mode: $SIGNING_MODE
 
-          If Signing mode is temporary, this APK uses a one-time runner-generated key.
-          A future permanent-key build will require one uninstall/reinstall transition.
+          WARNING: Signing mode 'temporary' means a NEW signing certificate on each build.
+          Temporary-key APKs cannot upgrade earlier temporary-key APKs in place.
+          You must uninstall the older APK before installing this release, which can clear its app data.
+          Do not use this path for unattended updates or production deployments.
+          For durable upgrades, configure all four GAZELLE_SIGNING_* repository secrets
+          with the same permanent keystore used for all future releases.
           Release tags and assets are immutable: bump versionName/versionCode for every new release.
           EOF
           gh release create "$TAG" dist/* \
@@ -180,14 +189,3 @@ jobs:
             --title "Gazelle Launcher $VERSION" \
             --prerelease \
             --notes-file release-notes.md
-
-      - name: Delete merged stale branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          BRANCH="gazelle-amazon-settings-permission"
-          if git ls-remote --exit-code --heads origin "refs/heads/$BRANCH" >/dev/null 2>&1; then
-            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/heads/$BRANCH"
-          fi

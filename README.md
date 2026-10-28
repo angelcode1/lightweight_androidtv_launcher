@@ -1,178 +1,87 @@
-# TV Launcher
+# Gazelle Launcher — Fire TV Cube 3
 
-**Version 1.6.1** — A lightweight Android TV home launcher focused on low RAM use and a simple, customizable app grid. Built with AI assistance.
+A small Android framework-based home launcher for the **Fire TV Cube 3 (AFTGAZL, `gazelle`)**. The Gazelle feature branch has been merged into `main`; this fork is not the upstream Wiiguy launcher release.
 
-> ⚠️ **Use at your own risk.** This app replaces your TV's home screen and includes optional system-level features (accessibility-based Home key override, stock launcher RAM killer, automatic updates). While the code is open source and audited, you install and use it entirely at your own risk — no warranty, express or implied.
+## Download
+
+Download from **[this fork's Releases](https://github.com/angelcode1/lightweight_androidtv_launcher/releases)**. Select the newest Gazelle prerelease and download:
+
+- `gazelle-launcher-*-release-signed.apk` — normal APK installer.
+- `gazelle-launcher-privileged-v*.zip` — Magisk module variant for privileged Fire OS launcher permissions; use on a rooted Cube only.
+- `APK-CERTIFICATE.txt`, `SHA256SUMS.txt`, `SIGNING-MODE.txt` — verification and signing metadata.
+
+**Important signing limitation:** releases made without permanent keystore secrets use a new temporary signing key each run. Those APKs **cannot upgrade each other in place**, even with a higher version code. You must uninstall the older different-key package first, which may erase app data. The earlier `v1.6.1-gazelle.13` release used a temporary key. Only a consistent permanent signing keystore permits normal future in-place upgrades.
+
+## Install on Cube 3
+
+Install the downloaded APK using ADB, then select Gazelle as HOME:
+
+```bash
+adb install -r gazelle-launcher-1.6.1-gazelle.14-release-signed.apk
+adb shell cmd package set-home-activity com.gazelle.launcher/com.tvlauncher.MainActivity
+```
+
+If Android reports `INSTALL_FAILED_UPDATE_INCOMPATIBLE`, the existing package has a different signing certificate. Back up launcher preferences first if necessary; uninstall the old launcher only when you are ready to lose its data. Keep ADB and a working recovery/Home fallback until reboot, sleep/wake, Settings and app launching have all been tested.
+
+For privileged installation using Magisk, install the matching module ZIP and reboot. On-device verification:
+
+```bash
+adb shell dumpsys package com.gazelle.launcher | grep -E 'SYSTEM|PRIVILEGED|LAUNCHER_SETTINGS'
+```
+
+See [GAZELLE.md](GAZELLE.md) for additional installation, permission, Home Assistant IPC, and Fire OS safety details.
 
 ## Features
 
-- **Up to 15 icons on home** — 14 apps plus a permanent **"+"** tile to add or change apps
-- **Low memory** — Release builds use **~30–40 MB PSS** on the home screen (measured ~27–38 MB on a typical TV; varies by device, pinned apps, and background checks)
-- **Fast app picker** — Loads the full app list in the background with a loading indicator
-- **App search & filter chips** — Search as you type, plus All / Selected / Shortcuts tabs in the add-apps screen
-- **App reordering & context menu** — Long-press an app for Open, Move Left, Move Right, App Info, or Remove
-- **Pinned shortcuts** — Optional support for shortcuts (e.g. from Activity Launcher)
-- **Long-press to remove** — Remove an app from the home screen without opening the picker
-- **Stable app order** — Your home row order is saved and restored across restarts
-- **Modern dark UI** — OLED-friendly theme with frosted card tiles and rounded app icons
-- **Optional wallpaper engine** — Cycling online wallpapers (Wallhaven / Bing / Picsum / Reddit), a custom image URL mode, and a dim overlay (solid background by default)
-- **Optional home button override** — Intercept the TV Home key on locked-down firmware via the Accessibility service (off by default)
-- **Optional stock launcher RAM killer** — Stop pre-installed OEM TV launchers from holding background RAM (off by default)
-- **Optional auto-updates** — Weekly check for new GitHub releases (on by default; can be disabled in About)
+- Framework-only HOME carousel for up to 17 pinned apps plus the Add tile; roughly seven visible at once.
+- Supports Android TV and ordinary launcher activities, with app pin repair after app updates.
+- Optional solid, Bing AU, Amazon Fire TV Collection AU, nature, and custom HTTPS wallpaper modes.
+- Wallpaper refresh without a permanently resident background service.
+- Home Assistant satellite control through signature-protected Android broadcasts.
+- Removes upstream Accessibility HOME interception, stock launcher RAM killer, WorkManager, self-updater, and AndroidX UI runtime dependencies.
+- Keeps icons warm and asynchronously refreshes HOME apps/wallpaper for efficient UI return.
 
-## Quick start
+## Build locally
 
-1. **Download** the APK using one of these options:
-   - **Downloader app (easiest on TV)** — see [Download with Downloader](#download-with-downloader) (code **4291463**)
-   - **Browser / PC** — [latest release](https://github.com/wiiguy/lightweight_androidtv_launcher/releases/latest) (release APK built by GitHub Actions when a `v*` tag is pushed)
-2. **Install** (ADB example):
+Requires JDK 17, Android SDK API 34 and Gradle 8.5 (checked-in Gradle wrapper).
 
-   ```bash
-   adb connect <TV_IP>:5555
-   adb install -r app-release.apk
-   ```
+```bash
+./gradlew test lint assembleDebug assembleRelease
+```
 
-3. **Set as default launcher** (if needed):
+Outputs:
 
-   ```bash
-   adb shell cmd package set-home-activity com.tvlauncher/.MainActivity
-   ```
+- `app/build/outputs/apk/debug/app-debug.apk` — debug signed for local testing.
+- `app/build/outputs/apk/release/app-release-unsigned.apk` — unsigned release verification.
+- `app/build/outputs/apk/release/app-release.apk` — signed release only when `SIGNING_STORE_FILE`, `SIGNING_STORE_PASSWORD`, `SIGNING_KEY_ALIAS`, and `SIGNING_KEY_PASSWORD` are configured.
 
-Press **Home** on the remote to open the launcher.
+There are no `github` or `fdroid` product flavors in this Gazelle fork.
 
-> Use the **release** APK for everyday use. Debug builds are larger and use more RAM because R8 shrinking is disabled.
+## GitHub Actions
+
+- [Gazelle CI](.github/workflows/ci.yml): on pushes to `main` and PRs; runs tests, lint and debug/release builds, and uploads the installable debug APK and unsigned release APK as temporary workflow artifacts.
+- [Unsigned verification](.github/workflows/release.yml): manual build artifact without creating a tag or release.
+- [Signed publication](.github/workflows/signed-release.yml): on `main` version updates in `app/build.gradle`, explicit `.github/release-trigger` changes, or manual dispatch. Verifies APK package/version/signature and publishes an immutable tagged prerelease plus a Magisk module ZIP.
+
+A new release **must** increment both `versionName` and `versionCode` in `app/build.gradle`; tags cannot be reused. GitHub Actions signs using four optional repository secrets:
+
+```text
+GAZELLE_SIGNING_KEYSTORE_B64
+GAZELLE_SIGNING_STORE_PASSWORD
+GAZELLE_SIGNING_KEY_ALIAS
+GAZELLE_SIGNING_KEY_PASSWORD
+```
+
+When all are present, the permanent key is used; when none are present, the workflow creates an explicitly **temporary-key test prerelease** with the upgrade limitation above. Partial secrets cause a hard failure.
 
 ## Screenshots
 
-**Home screen**
+![Gazelle home screenshot](fastlane/metadata/android/en-US/images/phoneScreenshots/01_home_screen.png)
 
-![Home Screen](fastlane/metadata/android/en-US/images/phoneScreenshots/01_home_screen.png)
+![App selection](fastlane/metadata/android/en-US/images/phoneScreenshots/02_app_selection.png)
 
-**App selection**
+## Technical documentation
 
-![App Selection](fastlane/metadata/android/en-US/images/phoneScreenshots/02_app_selection.png)
+See [GAZELLE.md](GAZELLE.md) and the [docs directory](docs) for detailed implementation, satellite permissions, wallpaper security, and debloat compatibility.
 
-## Download with Downloader
-
-On Fire TV, Google TV, or Android TV, the fastest way to get the APK is **[Downloader by AFTVnews](https://www.aftvnews.com/downloader/)** (install from the Amazon Appstore on Fire TV, or from Google Play on Android TV / Google TV).
-
-1. Open **Downloader**
-2. In the URL box, enter this short code and press **Go**:
-
-   ```
-   4291463
-   ```
-
-   You can also enter the full short link: `https://aftv.news/4291463` — both open the [latest `app-release.apk`](https://github.com/wiiguy/lightweight_androidtv_launcher/releases/latest/download/app-release.apk) from GitHub.
-3. When the download finishes, choose **Install** (allow **Install unknown apps** for Downloader if Android asks)
-4. After install, press **Home** and set TV Launcher as your home app if prompted
-
-> The short code always tracks the **latest** GitHub release. You do not need to re-enter a new code when a new version is published.
-
-## Install without ADB
-
-Copy the APK to the TV (USB, network share, or file transfer), enable **Unknown sources** in Settings → Security, then open the APK with a file manager and install.
-
-## Usage
-
-| Action | How |
-|--------|-----|
-| **Add or change apps** | Focus the **"+"** tile → select → pick apps (max 14) → **Done** |
-| **Launch an app** | Select its icon on the home screen |
-| **App menu** | Long-press an icon → **Open**, **Move Left**, **Move Right**, **App Info**, or **Remove** |
-| **Remove an app** | Long-press the icon → **Remove** |
-| **Shortcuts** | Turn **Shortcuts** on in the add-apps screen; pin shortcuts from supported apps |
-| **Search apps** | In the add-apps screen, type in the search field or use the All / Selected / Shortcuts chips |
-| **Wallpaper** | Press the **picture** button (top-right) — solid, cycling online, or custom URL |
-| **System settings** | Press the **gear** button (top-right) |
-| **About & Settings** | Focus **About & Settings** (bottom-right) — version, GitHub link, update options, home override & RAM killer toggles |
-
-### About & Settings screen
-
-| Option | What it does |
-|--------|----------------|
-| **Open GitHub** | Opens the project repository in a browser |
-| **Check for updates** | Checks GitHub now, downloads if newer, then prompts to install *(GitHub build only)* |
-| **Automatic weekly updates** | Toggle (default **on**). When on, Android schedules a background check about every 7 days while online *(GitHub build only)* |
-| **Override TV default launcher** | Toggle (default **off**). Intercepts the Home key on devices that lock the default launcher; requires enabling the Accessibility service |
-| **Kill stock launcher RAM** | Toggle (default **off**). Stops pre-installed OEM TV launchers from holding background RAM (with a confirmation prompt) |
-| **Close** | Dismiss the dialog |
-
-## Build from source
-
-Requires JDK 17 and the Android SDK (API 34).
-
-```bash
-./gradlew assembleGithubRelease   # GitHub build with in-app updater (recommended)
-./gradlew assembleFdroidRelease    # F-Droid build without the in-app updater
-./gradlew assembleGithubDebug      # faster debug builds, higher RAM on device
-./gradlew test                     # unit tests
-./gradlew lint                     # lint checks
-```
-
-The app ships in two flavors:
-- **`github`** — what GitHub users install; includes the automatic weekly updater that downloads new releases from GitHub.
-- **`fdroid`** — built from the same source for the F-Droid repo; the in-app updater is compiled out (updates come through F-Droid), and `REQUEST_INSTALL_PACKAGES` is not requested.
-
-GitHub release APK: `app/build/outputs/apk/github/release/app-github-release.apk` (uploaded to releases as `app-release.apk`).
-
-Pushing a tag like `v1.6.1` triggers the [release workflow](.github/workflows/release.yml) to build and publish a signed APK. The workflow sets `versionName` and `versionCode` from the tag (e.g. `v1.6.1` → `1.6.1` / `10601`) and verifies the APK before upload (requires signing secrets in the repo).
-
-## Requirements
-
-- Android 5.0+ (API 21)
-- Android TV or TV box with leanback support
-- Permissions:
-  - `QUERY_ALL_PACKAGES` — discover installed apps
-  - `INTERNET` — update check and APK download from GitHub (only when checking or updating)
-  - `REQUEST_INSTALL_PACKAGES` — install downloaded updates (you approve the system install screen) *(GitHub build only)*
-
-## Automatic updates
-
-When **Automatic weekly updates** is enabled (default), the app uses **Android WorkManager** to run an update check about **every 7 days** while the device has a network connection. It is not a fixed clock time (e.g. “every Monday”); the OS decides when to run the job.
-
-1. Fetches the [latest GitHub release](https://github.com/wiiguy/lightweight_androidtv_launcher/releases/latest)
-2. Compares the release tag to the installed version (e.g. `v1.6` vs `1.5`)
-3. If newer, downloads `app-release.apk` from the release assets
-4. Shows an **Install** dialog — you must still confirm on the TV (no silent install without root)
-
-**Notes:**
-
-- Allow **Install unknown apps** for TV Launcher when prompted.
-- Turn off background checks: **About** → disable **Automatic weekly updates**. This cancels the scheduled job and reduces background activity; **Check for updates** still works manually.
-- Updates only appear after a release is published on GitHub with `app-release.apk` attached.
-
-## Memory notes
-
-Measured on a typical Android TV (release build, home screen, ~6–8 pinned apps; values are `TOTAL PSS`):
-
-| Configuration | Approx. PSS |
-|---------------|-------------|
-| Release, auto-update **off** | **~25–30 MB** |
-| Release, auto-update **on** (default) | **~30–40 MB** (falls to ~27 MB after a fresh start; WorkManager + extra code load it a bit) |
-| + Home button override **on** | **~45–50 MB** (accessibility service keeps the process resident) |
-| + Cycling online wallpaper | **~55–60 MB** on 1080p sets (full-screen bitmap) |
-
-RAM also depends on how many apps are pinned and whether the add-apps screen was opened recently. The override and wallpaper features are off by default, keeping the default configuration lean.
-
-To check on a connected device:
-
-```bash
-adb shell dumpsys meminfo com.tvlauncher | grep "TOTAL PSS"
-```
-
-## Credits
-
-This release includes significant contributions from **[Jiten Dhull](https://github.com/jitendhull)** (PR #3). Thanks for the modernized UI and the new TV features:
-
-- **Modern dark UI** — OLED-friendly palette (#0E0E12), frosted card tiles, larger app icons with rounded corners
-- **App reordering & context menu** — long-press an app to Move Left / Move Right, open App Info, or Remove
-- **Home button override** — optional, off by default; accessibility-based service that intercepts the TV Home key on locked-down firmware (Google TV / Fire TV / Xiaomi)
-- **Stock launcher RAM killer** — optional, off by default; stops pre-installed OEM TV launchers from hogging background RAM
-- **Real-time app search & filter chips** — All / Selected / Shortcuts tabs in the add-apps screen
-- **Wallpaper engine** — optional, off by default (solid by default); cycling online wallpapers (Wallhaven / Bing / Picsum / Reddit), custom image URLs, and a dim overlay
-- **Adapter performance** — DiffUtil-based ListAdapter swaps that remove full `notifyDataSetChanged` refreshes
-
-## License
-
-Licensed under the [GNU General Public License v3.0](LICENSE) (GPL-3.0).
+Licensed under the repository's [LICENSE](LICENSE).
