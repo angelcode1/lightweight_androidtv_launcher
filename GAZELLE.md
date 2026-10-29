@@ -24,16 +24,47 @@ CI on `main` and pull requests runs tests, lint, debug assembly, and unsigned re
 
 `.github/workflows/release.yml` is a manual unsigned verification build only. It never creates or mutates a GitHub release/tag.
 
-`.github/workflows/signed-release.yml` is the publication workflow. A version bump in `app/build.gradle` on `main`, a change to `.github/release-trigger`, or manual workflow dispatch runs tests/lint and publishes a new tagged prerelease with a signed APK, certificate/checksums, and a matching privileged Magisk-module ZIP. It refuses existing tags. Permanent signing secrets are preferred; temporary signing is explicitly marked when used for prerelease testing.
+`.github/workflows/signed-release.yml` publishes stable, permanently signed releases.
+A version bump on `main`, a change to `.github/release-trigger`, or manual dispatch
+runs tests/lint, builds the APK and matching privileged Magisk ZIP, verifies the
+pinned certificate, and creates an immutable release marked latest. Existing tags
+are refused. All four signing secrets are required; there is no temporary-key fallback.
 
-Release signing uses:
+The permanent public certificate contract is in
+[.github/release-signing.json](.github/release-signing.json):
 
-    SIGNING_STORE_FILE
-    SIGNING_STORE_PASSWORD
-    SIGNING_KEY_ALIAS
-    SIGNING_KEY_PASSWORD
+```
+SHA256: 38df68dff9303220d11abcd235ff8467c4cf1653edbdfe5db099b058407dcef5
+Alias: gazelle-launcher-release
+Type: RSA-4096 / PKCS12
+First permanent version: 1.6.1-gazelle.15 / 10616
+```
 
-Every published release must bump both versionName and versionCode. Existing release tags/assets are treated as immutable. **Warning:** the `v1.6.1-gazelle.13` prerelease used a one-off temporary signing key, and without all four permanent keystore secrets every subsequent automated prerelease uses a *different* certificate. Such APKs cannot install as in-place updates to one another: uninstalling the prior app (and potentially losing app data) is required. Do not treat temporary-key releases as an auto-update channel. For permanent upgrades, configure `GAZELLE_SIGNING_KEYSTORE_B64`, `GAZELLE_SIGNING_STORE_PASSWORD`, `GAZELLE_SIGNING_KEY_ALIAS`, and `GAZELLE_SIGNING_KEY_PASSWORD` consistently before releasing.
+The private keystore and passwords belong in these Actions repository secrets:
+
+- `GAZELLE_SIGNING_KEYSTORE_B64`
+- `GAZELLE_SIGNING_STORE_PASSWORD`
+- `GAZELLE_SIGNING_KEY_ALIAS`
+- `GAZELLE_SIGNING_KEY_PASSWORD`
+
+The private key is generated and backed up outside Git. The connected GitHub app
+cannot administer Actions secrets. The owner runs the private backup's
+`Start-Permanent-Release.command` once with GitHub CLI authenticated; its public
+implementation is [tools/setup_permanent_release.py](tools/setup_permanent_release.py).
+It installs the four secrets without printing them, dispatches and watches the
+release, checks the permanent certificate, APK/module equality and released hashes,
+then updates Cube3's launcher manifest with the exact APK/module SHA256 and
+`SHA256SUMS.txt` URL. It refuses a different existing permanent signer.
+
+The first permanent release remains pending until that setup and the release run
+succeed; a generated certificate is not an APK checksum. Published temporary-key
+prereleases remain historical and are not relabeled or re-signed. Their signing
+identities differ from the permanent certificate, so they cannot be upgraded in
+place by this key. The Cube3 wrapper does not uninstall an incompatible app.
+
+The runner removes its private keystore even after failure. Public artifacts include
+the signed APK, matching Magisk ZIP, certificate report, permanent signing contract,
+source provenance and `SHA256SUMS.txt`; no private key/password is an artifact.
 
 ## Wallpaper design
 

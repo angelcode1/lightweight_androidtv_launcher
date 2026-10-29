@@ -1,7 +1,13 @@
 name: Cut signed Gazelle release
+run-name: Gazelle permanent release ${{ inputs.request_id || github.sha }}
 
 on:
   workflow_dispatch:
+    inputs:
+      request_id:
+        description: 'Optional setup request ID for tracking this release'
+        type: string
+        required: false
   push:
     branches: [main]
     paths:
@@ -13,23 +19,36 @@ permissions:
 
 concurrency:
   group: gazelle-signed-release
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   release:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
+
+      - name: Require and verify the permanent signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.GAZELLE_SIGNING_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.GAZELLE_SIGNING_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.GAZELLE_SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.GAZELLE_SIGNING_KEY_PASSWORD }}
+        run: python3 tools/release_signing.py prepare "$RUNNER_TEMP/gazelle-release.p12"
+
+      - name: Test signing and release contracts
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
 
       - name: Install Android SDK components
         shell: bash
@@ -39,101 +58,54 @@ jobs:
           export ANDROID_SDK_ROOT="$ANDROID_HOME"
           export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$ANDROID_HOME/platform-tools:$PATH"
           yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platforms;android-34" "build-tools;34.0.0"
+          sdkmanager 'platforms;android-34' 'build-tools;34.0.0'
 
-      - name: Read version
+      - name: Read version and refuse tag reuse
         id: version
         shell: bash
         run: |
           set -euo pipefail
-          VERSION_NAME="$(sed -n 's/^[[:space:]]*versionName[[:space:]]*"\([^"]*\)".*/\1/p' app/build.gradle | head -n1)"
-          VERSION_CODE="$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*\([0-9][0-9]*\).*/\1/p' app/build.gradle | head -n1)"
-          test -n "$VERSION_NAME"
-          test -n "$VERSION_CODE"
-          echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
-          echo "code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import os, pathlib, re, subprocess
+          text = pathlib.Path('app/build.gradle').read_text()
+          names = re.findall(r'^\s*versionName\s+"([0-9A-Za-z.-]+)"', text, re.M)
+          codes = re.findall(r'^\s*versionCode\s+(\d+)', text, re.M)
+          if len(names) != 1 or len(codes) != 1:
+              raise SystemExit('Expected exactly one version name and code')
+          tag = 'v' + names[0]
+          if subprocess.run(['git', 'show-ref', '--verify', '--quiet', 'refs/tags/' + tag]).returncode == 0:
+              raise SystemExit('Tag already exists; bump versionName and versionCode')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'name={names[0]}\ncode={codes[0]}\ntag={tag}\n')
+          PY
 
-      - name: Refuse version/tag reuse
+      - name: Test, lint and build the permanent-key release APK
         env:
-          TAG: ${{ steps.version.outputs.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists. Bump versionName/versionCode before releasing."
-            exit 1
-          fi
-
-      - name: Run tests and lint
-        run: ./gradlew test lint --no-daemon
-
-      - name: Prepare signing keystore
-        id: signing
-        env:
-          KEYSTORE_B64: ${{ secrets.GAZELLE_SIGNING_KEYSTORE_B64 }}
-          STORE_PASSWORD: ${{ secrets.GAZELLE_SIGNING_STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.GAZELLE_SIGNING_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.GAZELLE_SIGNING_KEY_PASSWORD }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          KEYSTORE="$RUNNER_TEMP/gazelle-release.jks"
-
-          present=0
-          [ -n "$KEYSTORE_B64" ] && present=$((present + 1))
-          [ -n "$STORE_PASSWORD" ] && present=$((present + 1))
-          [ -n "$KEY_ALIAS" ] && present=$((present + 1))
-          [ -n "$KEY_PASSWORD" ] && present=$((present + 1))
-
-          if [ "$present" -eq 4 ]; then
-            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE"
-            chmod 600 "$KEYSTORE"
-            echo "mode=permanent" >> "$GITHUB_OUTPUT"
-          elif [ "$present" -eq 0 ]; then
-            keytool -genkeypair               -keystore "$KEYSTORE"               -storetype JKS               -storepass gazelle-temp-build               -keypass gazelle-temp-build               -alias gazelle-temp               -keyalg RSA               -keysize 4096               -validity 3650               -dname "CN=Gazelle Launcher Temporary Build, O=angelcode1"
-            chmod 600 "$KEYSTORE"
-            echo "mode=temporary" >> "$GITHUB_OUTPUT"
-          else
-            echo "Signing secrets are partially configured. Configure all four or remove them all."
-            exit 1
-          fi
-
-      - name: Build permanently signed release APK
-        if: steps.signing.outputs.mode == 'permanent'
-        env:
-          SIGNING_STORE_FILE: ${{ runner.temp }}/gazelle-release.jks
+          SIGNING_STORE_FILE: ${{ runner.temp }}/gazelle-release.p12
           SIGNING_STORE_PASSWORD: ${{ secrets.GAZELLE_SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_ALIAS: ${{ secrets.GAZELLE_SIGNING_KEY_ALIAS }}
           SIGNING_KEY_PASSWORD: ${{ secrets.GAZELLE_SIGNING_KEY_PASSWORD }}
-        run: ./gradlew assembleRelease --no-daemon
+        run: ./gradlew test lint assembleRelease --no-daemon
 
-      - name: Build temporary-key signed release APK
-        if: steps.signing.outputs.mode == 'temporary'
+      - name: Verify APK identity and permanent signature; stage matching assets
         env:
-          SIGNING_STORE_FILE: ${{ runner.temp }}/gazelle-release.jks
-          SIGNING_STORE_PASSWORD: gazelle-temp-build
-          SIGNING_KEY_ALIAS: gazelle-temp
-          SIGNING_KEY_PASSWORD: gazelle-temp-build
-        run: ./gradlew assembleRelease --no-daemon
-
-      - name: Verify signature and stage release assets
+          VERSION: ${{ steps.version.outputs.name }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
         shell: bash
         run: |
           set -euo pipefail
           APK=app/build/outputs/apk/release/app-release.apk
           test -f "$APK"
           test ! -f app/build/outputs/apk/release/app-release-unsigned.apk
-          BADGING="$(/usr/local/lib/android/sdk/build-tools/34.0.0/aapt dump badging "$APK")"
+          BT=/usr/local/lib/android/sdk/build-tools/34.0.0
+          BADGING="$("$BT/aapt" dump badging "$APK")"
           printf '%s\n' "$BADGING" | grep -F "name='com.gazelle.launcher'"
-          printf '%s\n' "$BADGING" | grep -F "versionCode='${{ steps.version.outputs.code }}'"
-          printf '%s\n' "$BADGING" | grep -F "versionName='${{ steps.version.outputs.name }}'"
+          printf '%s\n' "$BADGING" | grep -F "versionCode='$VERSION_CODE'"
+          printf '%s\n' "$BADGING" | grep -F "versionName='$VERSION'"
           mkdir -p dist
-          VERSION="${{ steps.version.outputs.name }}"
-          /usr/local/lib/android/sdk/build-tools/34.0.0/apksigner \
-            verify --verbose --print-certs "$APK" | tee dist/APK-CERTIFICATE.txt
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee dist/APK-CERTIFICATE.txt
+          python3 tools/release_signing.py verify dist/APK-CERTIFICATE.txt
           cp "$APK" "dist/gazelle-launcher-${VERSION}-release-signed.apk"
-
           MODULE_DIR="$RUNNER_TEMP/gazelle-launcher-privileged"
           mkdir -p "$MODULE_DIR/system/priv-app/GazelleLauncher"
           cp "$APK" "$MODULE_DIR/system/priv-app/GazelleLauncher/GazelleLauncher.apk"
@@ -141,51 +113,55 @@ jobs:
           id=gazelle_launcher_privileged
           name=Gazelle Launcher Privileged
           version=$VERSION
-          versionCode=${{ steps.version.outputs.code }}
+          versionCode=$VERSION_CODE
           author=angelcode1
           description=Installs Gazelle Launcher as a privileged Fire OS system launcher
           EOF
-          (
-            cd "$MODULE_DIR"
-            zip -r9 -X "$GITHUB_WORKSPACE/dist/gazelle-launcher-privileged-v${{ steps.version.outputs.code }}.zip" module.prop system
-          )
+          (cd "$MODULE_DIR" && zip -r9 -X "$GITHUB_WORKSPACE/dist/gazelle-launcher-privileged-v${VERSION_CODE}.zip" module.prop system)
+          printf 'permanent\n' > dist/SIGNING-MODE.txt
+          cp .github/release-signing.json dist/release-signing.json
+          python3 - <<'PY'
+          import json, os, pathlib
+          record = dict(repository=os.environ['GITHUB_REPOSITORY'], commit=os.environ['GITHUB_SHA'],
+                        version_name=os.environ['VERSION'], version_code=int(os.environ['VERSION_CODE']),
+                        signing_mode='permanent')
+          pathlib.Path('dist/source-provenance.json').write_text(json.dumps(record, indent=2) + '\n')
+          PY
+          (cd dist && sha256sum *.apk *.zip *.json APK-CERTIFICATE.txt SIGNING-MODE.txt > SHA256SUMS.txt)
 
-          printf '%s\n' "${{ steps.signing.outputs.mode }}" > dist/SIGNING-MODE.txt
-          (cd dist && sha256sum *.apk *.zip > SHA256SUMS.txt)
-
-      - name: Upload workflow artifact
+      - name: Upload public release assets
         uses: actions/upload-artifact@v4
         with:
-          name: gazelle-launcher-${{ steps.version.outputs.name }}-signed
+          name: gazelle-launcher-${{ steps.version.outputs.name }}-permanent
           path: dist/*
           if-no-files-found: error
 
-      - name: Create immutable signed GitHub prerelease
+      - name: Publish immutable stable release and mark it latest
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
           VERSION: ${{ steps.version.outputs.name }}
           VERSION_CODE: ${{ steps.version.outputs.code }}
-          SIGNING_MODE: ${{ steps.signing.outputs.mode }}
         shell: bash
         run: |
           set -euo pipefail
           cat > release-notes.md <<EOF
-          Fire TV Cube 3 Gazelle Launcher signed prerelease.
+          Fire TV Cube 3 Gazelle Launcher release.
 
           Version code: $VERSION_CODE
-          Signing mode: $SIGNING_MODE
+          Signing mode: permanent
+          Certificate SHA256: $(python3 -c 'import json; print(json.load(open(".github/release-signing.json"))["certificate_sha256"])')
 
-          WARNING: Signing mode 'temporary' means a NEW signing certificate on each build.
-          Temporary-key APKs cannot upgrade earlier temporary-key APKs in place.
-          You must uninstall the older APK before installing this release, which can clear its app data.
-          Do not use this path for unattended updates or production deployments.
-          For durable upgrades, configure all four GAZELLE_SIGNING_* repository secrets
-          with the same permanent keystore used for all future releases.
-          Release tags and assets are immutable: bump versionName/versionCode for every new release.
+          APK and privileged Magisk ZIP contain the same signed application.
+          SHA256SUMS.txt lists the exact released bytes. Future releases use
+          the same permanent signing key. Existing temporary/test-key APKs
+          have a different signer and cannot be upgraded in place.
+          Release tags and assets are immutable; every release bumps both versions.
           EOF
-          gh release create "$TAG" dist/* \
-            --target "$GITHUB_SHA" \
-            --title "Gazelle Launcher $VERSION" \
-            --prerelease \
-            --notes-file release-notes.md
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" \
+            --title "Gazelle Launcher $VERSION" --latest --notes-file release-notes.md
+
+      - name: Remove private keystore from the runner
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/gazelle-release.p12"

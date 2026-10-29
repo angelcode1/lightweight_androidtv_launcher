@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "mode": "permanent",
+  "key_alias": "gazelle-launcher-release",
+  "keystore_type": "PKCS12",
+  "key_algorithm": "RSA-4096",
+  "certificate_sha256": "38df68dff9303220d11abcd235ff8467c4cf1653edbdfe5db099b058407dcef5",
+  "first_version_name": "1.6.1-gazelle.15",
+  "first_version_code": 10616
+}

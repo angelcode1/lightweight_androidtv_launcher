@@ -1,6 +1,6 @@
-gazelle-13
-version=1.6.1-gazelle.13
-versionCode=10614
-requested=2026-10-07
+gazelle-permanent-signing
+version=1.6.1-gazelle.15
+versionCode=10616
+requested=2026-10-29
 source=main
-cleanup_branch=gazelle-amazon-settings-permission
+signing=permanent-required
