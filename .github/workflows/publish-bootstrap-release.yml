@@ -1,0 +1,38 @@
+name: Publish first permanent Gazelle release
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/bootstrap-release.json'
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: gazelle-signed-release
+  cancel-in-progress: false
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Test permanent signing and import contracts
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: Install APK verification tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/usr/local/lib/android/sdk/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'build-tools;34.0.0'
+      - name: Verify original successful CI payload and publish permanent-key release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/publish_bootstrap_release.py --build-tools /usr/local/lib/android/sdk/build-tools/34.0.0 --output "$RUNNER_TEMP/gazelle-public-release"

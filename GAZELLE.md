@@ -52,15 +52,25 @@ cannot administer Actions secrets. The owner runs the private backup's
 `Start-Permanent-Release.command` once with GitHub CLI authenticated; its public
 implementation is [tools/setup_permanent_release.py](tools/setup_permanent_release.py).
 It installs the four secrets without printing them, dispatches and watches the
-release, checks the permanent certificate, APK/module equality and released hashes,
+release if it has not already been published, checks the permanent certificate, APK/module equality and released hashes,
 then updates Cube3's launcher manifest with the exact APK/module SHA256 and
 `SHA256SUMS.txt` URL. It refuses a different existing permanent signer.
 
-The first permanent release remains pending until that setup and the release run
-succeed; a generated certificate is not an APK checksum. Published temporary-key
-prereleases remain historical and are not relabeled or re-signed. Their signing
-identities differ from the permanent certificate, so they cannot be upgraded in
-place by this key. The Cube3 wrapper does not uninstall an incompatible app.
+The first permanent release uses a public signed-artifact import because the
+connected GitHub app cannot write Actions secrets. The exact successful `Gazelle CI`
+release artifact at source commit `3664d874fbf070258e096b1d3d7fdd582a0c360b`
+was signed locally with the permanent owner key. The import workflow downloads that
+same CI artifact again, compares every non-signature APK entry, verifies the pinned
+certificate and APK SHA256, and publishes the stable release with matching module
+and checksums. Only the already-signed public APK and its source receipt are in Git;
+the private key is outside Git and outside this import workflow. The import is
+restricted to the recorded version/source/build and never replaces an existing tag.
+
+Future source releases use the normal workflow after the owner installs the four
+permanent secrets. Published temporary-key prereleases remain historical; they are
+not relabeled or re-signed. Their identities differ from the permanent certificate,
+so they cannot be upgraded in place by this key. The Cube3 wrapper does not uninstall
+an incompatible app.
 
 The runner removes its private keystore even after failure. Public artifacts include
 the signed APK, matching Magisk ZIP, certificate report, permanent signing contract,

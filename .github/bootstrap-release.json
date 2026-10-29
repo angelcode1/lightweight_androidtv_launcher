@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "version_name": "1.6.1-gazelle.15",
+  "version_code": 10616,
+  "tag": "v1.6.1-gazelle.15",
+  "source_commit": "3664d874fbf070258e096b1d3d7fdd582a0c360b",
+  "ci_run_id": 40819703057,
+  "ci_artifact_id": 12873609371,
+  "ci_artifact": "gazelle-release-unsigned-3664d874fbf070258e096b1d3d7fdd582a0c360b",
+  "unsigned_apk_sha256": "f6e7169e505541613c3c15cd57464accf608d8bd6c36dfb5e671f3ab116c2a0b",
+  "signed_apk": "release-bootstrap/gazelle-launcher-1.6.1-gazelle.15-release-signed.apk",
+  "signed_apk_sha256": "4c1d67c71f740904c3c6eb3acd4fbf789dcdd18c170edade2cc20ebaadc8baa4",
+  "certificate_sha256": "38df68dff9303220d11abcd235ff8467c4cf1653edbdfe5db099b058407dcef5",
+  "signing_mode": "permanent"
+}

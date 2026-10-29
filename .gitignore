@@ -120,3 +120,6 @@ push-with-token.sh
 *.pfx
 signing-secrets.json
 gazelle-permanent-signing*/
+
+# Public signed first-release artifact; private keys remain excluded
+!release-bootstrap/*.apk
