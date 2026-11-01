@@ -1,0 +1,26 @@
+# Nabu -> Home Assistant Assist -> existing Fire TV ADB integration.
+# This is a Home Assistant package; it does NOT run in the Gazelle APK.
+# Replace BOTH entity_id values with the Fire TV's Android Debug Bridge media_player.
+# No root, persistent launcher service, Alexa permission, or Nabu rebuild required.
+intent_script:
+  GazelleLauncherHome:
+    description: Show the existing Gazelle HOME launcher on the Fire TV Cube.
+    action:
+      - action: androidtv.adb_command
+        target:
+          entity_id: media_player.fire_tv_cube # CHANGE ME
+        data:
+          command: HOME
+    speech:
+      text: "Opening Gazelle."
+
+  GazelleLaunchApp:
+    description: Launch an explicitly allowlisted app on the Fire TV Cube.
+    action:
+      - action: media_player.select_source
+        target:
+          entity_id: media_player.fire_tv_cube # CHANGE ME
+        data:
+          source: "{{ gazelle_app }}"
+    speech:
+      text: "Opening the app."

@@ -1,0 +1,27 @@
+language: "en"
+intents:
+  GazelleLauncherHome:
+    data:
+      - sentences:
+          - "(open|show) [the] gazelle [launcher]"
+          - "go to [the] gazelle home [screen]"
+  GazelleLaunchApp:
+    data:
+      - sentences:
+          - "(open|launch|start) {gazelle_app} [on [the] (cube|fire tv)]"
+lists:
+  # Only the exact package IDs below can be launched through this voice intent.
+  # These package IDs were present in the Cube's 2026-11-01 installed-app scan.
+  # Intentionally defer Kodi-specific commands and playback to a later phase.
+  gazelle_app:
+    values:
+      - in: "plex"
+        out: "com.plexapp.android"
+      - in: "(smart tube|smarttube)"
+        out: "org.smarttube.stable"
+      - in: "(m p v|mpv|mpv player)"
+        out: "app.mpvnova.player"
+      - in: "(you tube|youtube)"
+        out: "com.amazon.firetv.youtube"
+      - in: "(x plore|xplore|x-plore)"
+        out: "com.lonelycatgames.Xplore"
